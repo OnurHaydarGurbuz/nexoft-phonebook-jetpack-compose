@@ -1,160 +1,70 @@
 package com.example.nexoft.feature.contacts
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.compose.foundation.layout.statusBarsPadding
+import android.content.ContentProviderOperation
+import android.content.Context
+import android.net.Uri
+import android.provider.ContactsContract
+import java.io.InputStream
 
-@Composable
-fun ContactsScreen(
-    onCreateNew: () -> Unit,
-    vm: ContactsViewModel = viewModel()
-) {
-    val state by vm.state.collectAsStateWithLifecycle()
+fun isInDeviceContacts(context: Context, phone: String): Boolean {
+    // En sağlam kısa yol: PhoneLookup CONTENT_FILTER_URI
+    val uri = ContactsContract.PhoneLookup.CONTENT_FILTER_URI.buildUpon()
+        .appendPath(phone).build()
+    context.contentResolver.query(uri, arrayOf(ContactsContract.PhoneLookup._ID), null, null, null)
+        ?.use { c -> return c.moveToFirst() }
+    return false
+}
 
-    Scaffold { inner ->
-        Column(
-            modifier = Modifier
-                .padding(inner)
-                .fillMaxSize()
-                .background(Color(0xFFF6F6F6))
-        ) {
+fun saveToDeviceContacts(
+    context: Context,
+    first: String,
+    last: String,
+    phone: String,
+    photo: Uri?
+): Boolean {
+    val ops = ArrayList<ContentProviderOperation>()
+    val rawContactInsertIndex = ops.size
+    ops.add(ContentProviderOperation.newInsert(ContactsContract.RawContacts.CONTENT_URI)
+        .withValue(ContactsContract.RawContacts.ACCOUNT_NAME, null)
+        .withValue(ContactsContract.RawContacts.ACCOUNT_TYPE, null)
+        .build())
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(top = 40.dp, start = 16.dp, end = 16.dp, bottom = 20.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Contacts",
-                    color = Color(0xFF202020),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.ExtraBold
-                )
-                BlueCircleAddButton(onClick = onCreateNew)
-            }
+    // İsim
+    ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+        .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, rawContactInsertIndex)
+        .withValue(ContactsContract.Data.MIMETYPE,
+            ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+        .withValue(ContactsContract.CommonDataKinds.StructuredName.GIVEN_NAME, first)
+        .withValue(ContactsContract.CommonDataKinds.StructuredName.FAMILY_NAME, last)
+        .build())
 
-            Box(modifier = Modifier.padding(horizontal = 20.dp)) {
-                OutlinedTextField(
-                    value = state.searchQuery,
-                    onValueChange = { vm.onEvent(ContactsEvent.OnSearchChanged(it)) },
-                    leadingIcon = {
-                        Icon(Icons.Outlined.Search, contentDescription = null, tint = Color(0xFFB0B0B0))
-                    },
-                    placeholder = {
-                        Text(
-                            "Search contacts by name",
-                            color = Color(0xFFB0B0B0),
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 14.sp
-                        )
-                    },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp), // 40 -> 48dp
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        unfocusedContainerColor = Color.White,
-                        focusedContainerColor = Color.White,
-                        unfocusedBorderColor = Color(0xFFE7E7E7),
-                        focusedBorderColor = Color(0xFF0075FF),
-                        cursorColor = Color(0xFF0075FF)
-                    ),
-                    textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp)
-                )
-            }
+    // Telefon
+    ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+        .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, rawContactInsertIndex)
+        .withValue(ContactsContract.Data.MIMETYPE,
+            ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)
+        .withValue(ContactsContract.CommonDataKinds.Phone.NUMBER, phone)
+        .withValue(ContactsContract.CommonDataKinds.Phone.TYPE,
+            ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE)
+        .build())
 
-            Spacer(Modifier.height(16.dp))
-
-            if (state.contacts.isEmpty()) {
-                EmptyState(onCreateNew)
-            } else {
-                // TODO: listedeki kişiler (gruplama, swipe, device icon vs.)
-                Spacer(Modifier.height(8.dp))
-            }
+    // Foto (varsa)
+    photo?.let { uri ->
+        val bytes = context.contentResolver.openInputStream(uri)?.use(InputStream::readBytes)
+        if (bytes != null) {
+            ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, rawContactInsertIndex)
+                .withValue(ContactsContract.Data.MIMETYPE,
+                    ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+                .withValue(ContactsContract.CommonDataKinds.Photo.PHOTO, bytes)
+                .build())
         }
     }
-}
 
-@Composable
-private fun BlueCircleAddButton(onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .size(32.dp)
-            .clip(CircleShape)
-            .background(Color(0xFF0075FF))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(Icons.Filled.Add, contentDescription = "Add", tint = Color.White)
-    }
-}
-
-@Composable
-private fun EmptyState(onCreateNew: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 33.dp)
-            .offset(y = (-180).dp), // tüm bloğu merkezin biraz ÜSTÜNE taşı
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .size(90.dp)
-                .clip(CircleShape)
-                .background(Color(0xFFD1D1D1))
-        )
-
-        Spacer(Modifier.height(16.dp))
-
-        Text(
-            "No Contacts",
-            color = Color(0xFF202020),
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center
-        )
-
-        Spacer(Modifier.height(4.dp))
-
-        Text(
-            "Contacts you’ve added will appear here.",
-            color = Color(0xFF3D3D3D),
-            fontSize = 16.sp,
-            textAlign = TextAlign.Center
-        )
-
-        Spacer(Modifier.height(12.dp))
-
-        Text(
-            "Create New Contact",
-            color = Color(0xFF0075FF),
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.clickable { onCreateNew() }
-        )
+    return try {
+        context.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
+        true
+    } catch (t: Throwable) {
+        false
     }
 }

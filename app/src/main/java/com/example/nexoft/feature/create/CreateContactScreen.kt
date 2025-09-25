@@ -210,7 +210,7 @@ fun CreateContactScreen(
 
 
 @Composable
-private fun FieldBox(
+internal fun FieldBox(
     value: String,
     onChange: (String) -> Unit,
     placeholder: String,
