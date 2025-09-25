@@ -1,6 +1,9 @@
 package com.example.nexoft.feature.contacts
 
-
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts.RequestPermission
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,38 +14,43 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.material.icons.filled.Phone
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import coil.compose.AsyncImage
-import kotlinx.coroutines.withContext
-
 
 @Composable
 fun ContactsScreen(
     onCreateNew: () -> Unit,
-    onOpenProfile: (id: String) -> Unit,   // <<< YENİ
+    onOpenProfile: (id: String) -> Unit,
     vm: ContactsViewModel = viewModel()
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val ctx = LocalContext.current
+
+    // READ_CONTACTS iznini iste ve yalnızca 1 kez device rozetlerini yükle
+    val readPermLauncher = rememberLauncherForActivityResult(RequestPermission()) { granted ->
+        if (granted) vm.refreshDeviceBadges(ctx)
+    }
+    LaunchedEffect(Unit) {
+        val hasRead = ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_CONTACTS) ==
+                PackageManager.PERMISSION_GRANTED
+        if (hasRead) vm.refreshDeviceBadges(ctx) else readPermLauncher.launch(Manifest.permission.READ_CONTACTS)
+    }
 
     Scaffold { inner ->
         Column(
@@ -123,7 +131,7 @@ fun ContactsScreen(
                 EmptyState(onCreateNew)
             } else {
                 val groups = filtered.groupBy { displayInitial(it) }
-                    .toSortedMap() // A..Z sıralı
+                    .toSortedMap()
 
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -131,9 +139,7 @@ fun ContactsScreen(
                 ) {
                     groups.forEach { (letter, contacts) ->
                         // Section Header (sticky)
-                        stickyHeader {
-                            SectionHeader(letter = letter)
-                        }
+                        stickyHeader { SectionHeader(letter = letter) }
 
                         itemsIndexed(contacts) { index, contact ->
                             val isFirst = index == 0
@@ -151,7 +157,7 @@ fun ContactsScreen(
                                 onClick = { onOpenProfile(contact.id) }
                             )
 
-                            if (isLast) Spacer(Modifier.height(16.dp)) // grup arası boşluk
+                            if (isLast) Spacer(Modifier.height(16.dp))
                         }
                     }
                 }
@@ -176,11 +182,7 @@ private fun BlueCircleAddButton(onClick: () -> Unit) {
 
 @Composable
 private fun SectionHeader(letter: Char) {
-    // Figma'daki 32dp yükseklik, beyaz zemin
-    Surface(
-        color = Color.White,
-        shadowElevation = 0.dp
-    ) {
+    Surface(color = Color.White, shadowElevation = 0.dp) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -219,9 +221,7 @@ private fun ContactRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Avatar(contact)
-
             Spacer(Modifier.width(8.dp))
-
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = displayName(contact),
@@ -241,7 +241,6 @@ private fun ContactRow(
         }
     }
 }
-
 
 private fun displayName(c: com.example.nexoft.core.model.Contact): String {
     val name = listOf(c.firstName, c.lastName).filter { it.isNotBlank() }.joinToString(" ").trim()
@@ -297,34 +296,12 @@ private fun EmptyState(onCreateNew: () -> Unit) {
 
 @Composable
 private fun Avatar(contact: com.example.nexoft.core.model.Contact) {
-    val ctx = androidx.compose.ui.platform.LocalContext.current
-
-    // Başlangıç durumu: ViewModel'den gelen flag
-    var showBadge by remember(contact.id, contact.isInDevice) {
-        mutableStateOf(contact.isInDevice)
-    }
-
-    // READ izni varsa cihazda var mı diye sessizce kontrol et (UI'ı bloklamadan)
-    LaunchedEffect(contact.id, contact.phone) {
-        if (!showBadge &&
-            androidx.core.content.ContextCompat.checkSelfPermission(
-                ctx, android.Manifest.permission.READ_CONTACTS
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            val exists = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                isInDeviceContacts(ctx, contact.phone)
-            }
-            if (exists) showBadge = true
-        }
-    }
-
-
-    // Dış container CLIP YOK → rozet kesilmez
+    // DIŞ CONTAINER CLIP YOK ⇒ rozet kesilmez
     Box(
         modifier = Modifier.size(40.dp),
         contentAlignment = Alignment.BottomEnd
     ) {
-        // Fotoğrafı clip’le
+        // İçteki görsel daire içine kırpılır
         Box(
             modifier = Modifier
                 .matchParentSize()
@@ -350,25 +327,23 @@ private fun Avatar(contact: com.example.nexoft.core.model.Contact) {
             }
         }
 
-        // Sağ-alt mavi telefon rozeti
-        if (showBadge) {
+        // Yalnızca VM’den gelen flag’e göre rozet
+        if (contact.isInDevice) {
             Box(
                 modifier = Modifier
                     .size(16.dp)
                     .clip(CircleShape)
                     .background(Color(0xFF0075FF))
-                    .border(1.dp, Color.White, CircleShape)
-                    .align(Alignment.BottomEnd) // zaten Box'ın alignment'ı bu ama net olsun
-                ,
+                    .border(1.dp, Color.White, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                // Telefon ikonu istersen ADD yerine PHONE kullan
-                // import: androidx.compose.material.icons.filled.Phone
                 Icon(
                     imageVector = Icons.Filled.Phone,
                     contentDescription = "Saved in phone",
                     tint = Color.White,
-                    modifier = Modifier.fillMaxSize().padding(2.dp)
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(2.dp)
                 )
             }
         }
