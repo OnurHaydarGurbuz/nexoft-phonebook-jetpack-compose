@@ -1,6 +1,7 @@
 package com.example.nexoft.feature.create
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -18,18 +19,62 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import android.Manifest
+import android.content.Context
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts.*
+import androidx.core.content.FileProvider
+import coil.compose.AsyncImage
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.*
+
 
 @Composable
 fun CreateContactScreen(
     onCancel: () -> Unit,
-    // prefer passing values up so the list updates:
-    onDone: (first: String, last: String, phone: String) -> Unit
+    onDone: (first: String, last: String, phone: String, photo: Uri?) -> Unit
 ) {
     // state
     var first by rememberSaveable { mutableStateOf("") }
     var last  by rememberSaveable { mutableStateOf("") }
     var phone by rememberSaveable { mutableStateOf("") }
+    var showPickerSheet by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var photoUri by rememberSaveable { mutableStateOf<Uri?>(null) }
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
     val doneEnabled = first.isNotBlank() && phone.isNotBlank()
+
+    fun createImageUri(ctx: Context): Uri {
+        val time = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val dir = File(ctx.cacheDir, "images").apply { mkdirs() }
+        val file = File(dir, "IMG_${time}.jpg")
+        return FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
+    }
+    val takePictureLauncher = rememberLauncherForActivityResult(TakePicture()) { success ->
+        if (success) photoUri = pendingCameraUri
+        pendingCameraUri = null
+        showPickerSheet = false
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(RequestPermission()) { granted ->
+        if (granted) {
+            val uri = createImageUri(context)
+            pendingCameraUri = uri
+            takePictureLauncher.launch(uri)
+        } else {
+            showPickerSheet = false
+        }
+    }
+
+    val pickMediaLauncher = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
+        if (uri != null) photoUri = uri
+        showPickerSheet = false
+    }
+
 
     // Background (Figma: rgba(0,0,0,.45))
     Box(
@@ -40,6 +85,7 @@ fun CreateContactScreen(
     ) {
         // The sheet (Figma: top=42px, radius 25px, full width/height)
         Surface(
+
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = 42.dp), // space above
@@ -47,7 +93,8 @@ fun CreateContactScreen(
             color = Color.White,
             tonalElevation = 6.dp,
             shadowElevation = 40.dp // Figma shows a strong soft shadow
-        ) {
+        )
+        {
             // Inner content (Figma width 343 => 16dp side paddings on 375)
             Column(
                 modifier = Modifier
@@ -79,10 +126,9 @@ fun CreateContactScreen(
                         color = if (doneEnabled) Color(0xFF0075FF) else Color(0xFFD1D1D1),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier
-                            .clickable(enabled = doneEnabled) {
-                                onDone(first.trim(), last.trim(), phone.trim())
-                            }
+                        modifier = Modifier.clickable(enabled = doneEnabled) {
+                            onDone(first.trim(), last.trim(), phone.trim(), photoUri)
+                        }
                     )
                 }
 
@@ -100,11 +146,11 @@ fun CreateContactScreen(
                             .background(Color(0xFFD1D1D1)), // var(--200)
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.Person,
-                            contentDescription = null,
-                            tint = Color.White
-                        )
+                        if (photoUri == null) {
+                            Icon(imageVector = Icons.Filled.Person, contentDescription = null, tint = Color.White)
+                        } else {
+                            AsyncImage(model = photoUri, contentDescription = "photo", modifier = Modifier.fillMaxSize())
+                        }
                     }
                     Spacer(Modifier.height(8.dp))
                     Text(
@@ -112,9 +158,7 @@ fun CreateContactScreen(
                         color = Color(0xFF0075FF),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.clickable {
-                            // TODO: open picker (camera/gallery)
-                        }
+                        modifier = Modifier.clickable { showPickerSheet = true }
                     )
                 }
 
@@ -141,13 +185,16 @@ fun CreateContactScreen(
             }
         }
     }
+    AddPhotoPickerSheet(
+        visible = showPickerSheet,
+        onDismiss = { showPickerSheet = false },
+        onCamera  = { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) },
+        onGallery = { pickMediaLauncher.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
+    )
+
 }
 
-/**
- * Matches the Figma “white box with 8px radius, 1px #E7E7E7 outline,
- * 40px height, 16px horizontal padding, 10px vertical padding,
- * placeholder color #888888”.
- */
+
 @Composable
 private fun FieldBox(
     value: String,
@@ -158,15 +205,18 @@ private fun FieldBox(
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(48.dp), // 40 in Figma is very tight; 48 reads better on Android
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
         placeholder = {
             Text(
-                placeholder,
+                placeholder,                 // "First", "Last", "Phone"
                 color = Color(0xFF888888),
-                fontWeight = FontWeight.SemiBold
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontSize = 14.sp,        // smaller
+                    lineHeight = 18.sp,      // avoids bottom clipping
+                    fontWeight = FontWeight.SemiBold
+                ),
+                maxLines = 1
             )
         },
         singleLine = true,
@@ -180,3 +230,68 @@ private fun FieldBox(
         )
     )
 }
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AddPhotoPickerSheet(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    onCamera: () -> Unit,
+    onGallery: () -> Unit
+) {
+    if (!visible) return
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color.White,
+        scrimColor = Color.Black.copy(alpha = 0.85f),
+        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+        dragHandle = {}
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // pill: Camera
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .clip(RoundedCornerShape(64.dp))
+                    .border(1.dp, Color(0xFF202020), RoundedCornerShape(64.dp))
+                    .clickable(onClick = onCamera),
+                contentAlignment = Alignment.Center
+            ) { Text("Camera", color = Color(0xFF202020), fontWeight = FontWeight.SemiBold) }
+
+            Spacer(Modifier.height(8.dp))
+
+            // pill: Gallery
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .clip(RoundedCornerShape(64.dp))
+                    .border(1.dp, Color(0xFF202020), RoundedCornerShape(64.dp))
+                    .clickable(onClick = onGallery),
+                contentAlignment = Alignment.Center
+            ) { Text("Gallery", color = Color(0xFF202020), fontWeight = FontWeight.SemiBold) }
+
+            Spacer(Modifier.height(12.dp))
+
+            // text button: Cancel (blue)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .clip(RoundedCornerShape(28.dp))
+                    .clickable(onClick = onDismiss),
+                contentAlignment = Alignment.Center
+            ) { Text("Cancel", color = Color(0xFF0075FF), fontWeight = FontWeight.SemiBold) }
+
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+

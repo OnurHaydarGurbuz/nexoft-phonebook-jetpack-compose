@@ -23,4 +23,15 @@ class ContactsViewModel : ViewModel() {
                 _state.value = _state.value.copy(searchQuery = event.q)
         }
     }
+    fun addContact(first: String, last: String, phone: String, photoUri: String?) {
+        val newOne = com.example.nexoft.core.model.Contact(
+            id = java.util.UUID.randomUUID().toString(),
+            firstName = first,
+            lastName = last,
+            phone = phone,
+            photoUrl = photoUri,
+            isInDevice = false
+        )
+        _state.value = _state.value.copy(contacts = _state.value.contacts + newOne)
+    }
 }

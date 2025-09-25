@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Save images in app cache; no storage permission needed -->
+    <cache-path name="images" path="images/" />
+    <external-cache-path name="ext_images" path="images/" />
+</paths>
