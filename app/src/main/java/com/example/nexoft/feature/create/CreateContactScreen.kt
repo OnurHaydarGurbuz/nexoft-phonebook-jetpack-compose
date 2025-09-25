@@ -28,9 +28,14 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts.*
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
+import com.airbnb.lottie.compose.LottieAnimation
+import com.airbnb.lottie.compose.LottieCompositionSpec
+import com.airbnb.lottie.compose.animateLottieCompositionAsState
+import com.airbnb.lottie.compose.rememberLottieComposition
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+import androidx.compose.ui.zIndex
 
 
 @Composable
@@ -47,6 +52,8 @@ fun CreateContactScreen(
     var photoUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
     val doneEnabled = first.isNotBlank() && phone.isNotBlank()
+    var showSuccess by remember { mutableStateOf(false) }
+
 
     fun createImageUri(ctx: Context): Uri {
         val time = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
@@ -127,7 +134,7 @@ fun CreateContactScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.clickable(enabled = doneEnabled) {
-                            onDone(first.trim(), last.trim(), phone.trim(), photoUri)
+                            showSuccess = true
                         }
                     )
                 }
@@ -191,6 +198,13 @@ fun CreateContactScreen(
         onCamera  = { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) },
         onGallery = { pickMediaLauncher.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
     )
+    if (showSuccess) {
+        OneShotLottie(assetName = "Done.lottie") {
+            showSuccess = false
+            onDone(first.trim(), last.trim(), phone.trim(), photoUri)
+        }
+    }
+
 
 }
 
@@ -294,4 +308,50 @@ fun AddPhotoPickerSheet(
     }
 }
 
+@Composable
+private fun OneShotLottie(
+    assetName: String,
+    onFinished: () -> Unit
+) {
+    // Hide keyboard immediately
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        focusManager.clearFocus(force = true)
+        keyboard?.hide()
+    }
 
+    // Fullscreen white overlay (no Dialog)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+            .zIndex(10f),
+        contentAlignment = Alignment.Center
+    ) {
+        // Lottie + texts
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            val comp by rememberLottieComposition(LottieCompositionSpec.Asset(assetName))
+            val progress by animateLottieCompositionAsState(
+                composition = comp,
+                iterations = 1,
+                restartOnPlay = false
+            )
+            if (progress >= 0.999f) {
+                LaunchedEffect(Unit) {
+                    kotlinx.coroutines.delay(250)
+                    onFinished()
+                }
+            }
+            LottieAnimation(
+                composition = comp,
+                progress = { progress },
+                modifier = Modifier.size(120.dp)
+            )
+            Spacer(Modifier.height(24.dp))
+            Text("All Done!", color = Color(0xFF202020), fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Text("New contact saved 🎉", color = Color(0xFF3D3D3D), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}

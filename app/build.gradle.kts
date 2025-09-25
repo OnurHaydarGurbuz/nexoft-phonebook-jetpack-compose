@@ -75,4 +75,5 @@ dependencies {
     // (İleride) Lottie
     implementation(libs.lottie.compose)
 
+
 }
