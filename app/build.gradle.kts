@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace = "com.example.nexoft"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.nexoft"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0"
 
@@ -56,4 +56,23 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+
+
+
+    implementation(platform(libs.androidx.compose.bom.v20250901))
+    implementation(libs.androidx.material.icons.extended)
+    implementation(libs.ui)
+    implementation(libs.material3)
+    implementation(libs.ui.tooling.preview)
+    debugImplementation(libs.ui.tooling)
+
+    implementation(libs.androidx.activity.compose.v1110)
+    implementation(libs.androidx.navigation.compose)
+
+    // Coil (görsel yükleme – ileride foto için)
+    implementation(libs.coil.compose)
+
+    // (İleride) Lottie
+    implementation(libs.lottie.compose)
+
 }

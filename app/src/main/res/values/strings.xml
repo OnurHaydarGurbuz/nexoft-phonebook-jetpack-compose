@@ -1,3 +1,8 @@
 <resources>
     <string name="app_name">Nexoft</string>
+    <string name="contacts">Contacts</string>
+    <string name="search_by_name">Search by name</string>
+    <string name="no_contacts">No Contacts</string>
+    <string name="create_new_contact">Create New Contact</string>
+    <string name="new_contact">New Contact</string>
 </resources>
