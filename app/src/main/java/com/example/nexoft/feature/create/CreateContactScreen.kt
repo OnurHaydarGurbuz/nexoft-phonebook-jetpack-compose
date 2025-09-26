@@ -1,44 +1,91 @@
 package com.example.nexoft.feature.create
 
+import android.Manifest
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.ImageDecoder
+import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
+import androidx.activity.result.contract.ActivityResultContracts.RequestPermission
+import androidx.activity.result.contract.ActivityResultContracts.TakePicture
+import androidx.annotation.RequiresApi
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import android.Manifest
-import android.content.Context
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts.*
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.zIndex
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.airbnb.lottie.compose.LottieAnimation
 import com.airbnb.lottie.compose.LottieCompositionSpec
 import com.airbnb.lottie.compose.animateLottieCompositionAsState
 import com.airbnb.lottie.compose.rememberLottieComposition
-import java.io.File
-import java.text.SimpleDateFormat
-import java.util.*
-import androidx.compose.ui.zIndex
 import com.example.nexoft.ui.SheetHeader
 import com.example.nexoft.ui.SheetScaffold
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.core.graphics.createBitmap
 
+@RequiresApi(Build.VERSION_CODES.R)
 @Composable
 fun CreateContactScreen(
     onCancel: () -> Unit,
@@ -49,41 +96,61 @@ fun CreateContactScreen(
     var last  by rememberSaveable { mutableStateOf("") }
     var phone by rememberSaveable { mutableStateOf("") }
     var showPickerSheet by remember { mutableStateOf(false) }
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     var photoUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
     val doneEnabled = first.isNotBlank() && phone.isNotBlank()
     var showSuccess by remember { mutableStateOf(false) }
+    var showCropper by remember { mutableStateOf(false) }
+    var pendingSource by remember { mutableStateOf<Uri?>(null) }
 
+    // Düzeltilmiş createImageUri fonksiyonu
     fun createImageUri(ctx: Context): Uri {
-        val time = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val dir = File(ctx.cacheDir, "images").apply { mkdirs() }
-        val file = File(dir, "IMG_${time}.jpg")
-        return FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
+        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val imageFileName = "JPEG_${timeStamp}_"
+
+        // Cache yerine external files directory kullan
+        val storageDir = File(ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES), "camera")
+        if (!storageDir.exists()) {
+            storageDir.mkdirs()
+        }
+
+        val imageFile = File.createTempFile(imageFileName, ".jpg", storageDir)
+        return FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", imageFile)
     }
 
     val takePictureLauncher = rememberLauncherForActivityResult(TakePicture()) { success ->
-        if (success) photoUri = pendingCameraUri
+        if (success && pendingCameraUri != null) {
+            pendingSource = pendingCameraUri
+            showCropper = true
+        }
         pendingCameraUri = null
         showPickerSheet = false
     }
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(RequestPermission()) { granted ->
         if (granted) {
-            val uri = createImageUri(context)
-            pendingCameraUri = uri
-            takePictureLauncher.launch(uri)
+            try {
+                val uri = createImageUri(context)
+                pendingCameraUri = uri
+                takePictureLauncher.launch(uri)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                showPickerSheet = false
+            }
         } else {
             showPickerSheet = false
         }
     }
 
     val pickMediaLauncher = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
-        if (uri != null) photoUri = uri
+        if (uri != null) {
+            pendingSource = uri
+            showCropper = true
+        }
         showPickerSheet = false
     }
 
-    // ---- Ortak sheet iskeleti ----
     SheetScaffold(topPadding = 42.dp) {
         SheetHeader(
             leftLabel = "Cancel",
@@ -120,7 +187,12 @@ fun CreateContactScreen(
                 if (photoUri == null) {
                     Icon(imageVector = Icons.Filled.Person, contentDescription = null, tint = Color.White)
                 } else {
-                    AsyncImage(model = photoUri, contentDescription = "photo", modifier = Modifier.fillMaxSize())
+                    AsyncImage(
+                        model = photoUri,
+                        contentDescription = "photo",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -155,7 +227,23 @@ fun CreateContactScreen(
         onGallery = { pickMediaLauncher.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
     )
 
-    // Başarılı animasyonu → ardından onDone
+    // Düzeltilmiş PhotoCropper - artık tam ekran dialog
+    if (showCropper && pendingSource != null) {
+        PhotoCropperDialog(
+            sourceUri = pendingSource!!,
+            onDismiss = {
+                showCropper = false
+                pendingSource = null
+            },
+            onCropped = { processed ->
+                showCropper = false
+                pendingSource = null
+                photoUri = processed
+            }
+        )
+    }
+
+    // Başarılı animasyonu
     if (showSuccess) {
         OneShotLottie(assetName = "Done.lottie") {
             showSuccess = false
@@ -163,7 +251,6 @@ fun CreateContactScreen(
         }
     }
 }
-
 
 @Composable
 internal fun FieldBox(
@@ -179,11 +266,11 @@ internal fun FieldBox(
         shape = RoundedCornerShape(8.dp),
         placeholder = {
             Text(
-                placeholder,                 // "First", "Last", "Phone"
+                placeholder,
                 color = Color(0xFF888888),
                 style = MaterialTheme.typography.bodySmall.copy(
-                    fontSize = 14.sp,        // smaller
-                    lineHeight = 18.sp,      // avoids bottom clipping
+                    fontSize = 14.sp,
+                    lineHeight = 18.sp,
                     fontWeight = FontWeight.SemiBold
                 ),
                 maxLines = 1
@@ -200,6 +287,7 @@ internal fun FieldBox(
         )
     )
 }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddPhotoPickerSheet(
@@ -223,7 +311,6 @@ fun AddPhotoPickerSheet(
                 .padding(horizontal = 24.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // pill: Camera
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -232,11 +319,12 @@ fun AddPhotoPickerSheet(
                     .border(1.dp, Color(0xFF202020), RoundedCornerShape(64.dp))
                     .clickable(onClick = onCamera),
                 contentAlignment = Alignment.Center
-            ) { Text("Camera", color = Color(0xFF202020), fontWeight = FontWeight.SemiBold) }
+            ) {
+                Text("Camera", color = Color(0xFF202020), fontWeight = FontWeight.SemiBold)
+            }
 
             Spacer(Modifier.height(8.dp))
 
-            // pill: Gallery
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -245,11 +333,12 @@ fun AddPhotoPickerSheet(
                     .border(1.dp, Color(0xFF202020), RoundedCornerShape(64.dp))
                     .clickable(onClick = onGallery),
                 contentAlignment = Alignment.Center
-            ) { Text("Gallery", color = Color(0xFF202020), fontWeight = FontWeight.SemiBold) }
+            ) {
+                Text("Gallery", color = Color(0xFF202020), fontWeight = FontWeight.SemiBold)
+            }
 
             Spacer(Modifier.height(12.dp))
 
-            // text button: Cancel (blue)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -257,7 +346,9 @@ fun AddPhotoPickerSheet(
                     .clip(RoundedCornerShape(28.dp))
                     .clickable(onClick = onDismiss),
                 contentAlignment = Alignment.Center
-            ) { Text("Cancel", color = Color(0xFF0075FF), fontWeight = FontWeight.SemiBold) }
+            ) {
+                Text("Cancel", color = Color(0xFF0075FF), fontWeight = FontWeight.SemiBold)
+            }
 
             Spacer(Modifier.height(8.dp))
         }
@@ -269,15 +360,14 @@ private fun OneShotLottie(
     assetName: String,
     onFinished: () -> Unit
 ) {
-    // Hide keyboard immediately
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+
     LaunchedEffect(Unit) {
         focusManager.clearFocus(force = true)
         keyboard?.hide()
     }
 
-    // Fullscreen white overlay (no Dialog)
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -285,7 +375,6 @@ private fun OneShotLottie(
             .zIndex(10f),
         contentAlignment = Alignment.Center
     ) {
-        // Lottie + texts
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             val comp by rememberLottieComposition(LottieCompositionSpec.Asset(assetName))
             val progress by animateLottieCompositionAsState(
@@ -293,12 +382,14 @@ private fun OneShotLottie(
                 iterations = 1,
                 restartOnPlay = false
             )
+
             if (progress >= 0.999f) {
                 LaunchedEffect(Unit) {
                     kotlinx.coroutines.delay(250)
                     onFinished()
                 }
             }
+
             LottieAnimation(
                 composition = comp,
                 progress = { progress },
@@ -310,4 +401,271 @@ private fun OneShotLottie(
             Text("New contact saved 🎉", color = Color(0xFF3D3D3D), fontSize = 16.sp, fontWeight = FontWeight.Medium)
         }
     }
+}
+
+@RequiresApi(Build.VERSION_CODES.R)
+@OptIn(DelicateCoroutinesApi::class)
+@Composable
+fun PhotoCropperDialog(
+    sourceUri: Uri,
+    onDismiss: () -> Unit,
+    onCropped: (Uri) -> Unit,
+    outSizePx: Int = 512,
+    outQuality: Int = 70
+) {
+    val ctx = LocalContext.current
+    var scale by remember { mutableFloatStateOf(1f) }
+    var translation by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var imageSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
+    var containerSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
+
+    // Resmin gerçek boyutlarını ve sınırlarını hesaplayan fonksiyon
+    fun calculateImageBounds(): androidx.compose.ui.geometry.Rect {
+        if (imageSize == androidx.compose.ui.geometry.Size.Zero || containerSize == androidx.compose.ui.geometry.Size.Zero) {
+            return androidx.compose.ui.geometry.Rect.Zero
+        }
+
+        // Resmin container içindeki fit boyutlarını hesapla
+        val containerRatio = containerSize.width / containerSize.height
+        val imageRatio = imageSize.width / imageSize.height
+
+        val (fitWidth, fitHeight) = if (imageRatio > containerRatio) {
+            // Resim daha geniş - width'e göre fit et
+            containerSize.width to containerSize.width / imageRatio
+        } else {
+            // Resim daha uzun - height'e göre fit et
+            containerSize.height * imageRatio to containerSize.height
+        }
+
+        // Resmin container içindeki pozisyonu (ortalanmış)
+        val imageLeft = (containerSize.width - fitWidth) / 2f
+        val imageTop = (containerSize.height - fitHeight) / 2f
+
+        return androidx.compose.ui.geometry.Rect(
+            offset = androidx.compose.ui.geometry.Offset(imageLeft, imageTop),
+            size = androidx.compose.ui.geometry.Size(fitWidth, fitHeight)
+        )
+    }
+
+    val transform = rememberTransformableState { zoomChange, panChange, _ ->
+        val newScale = (scale * zoomChange).coerceIn(0.5f, 4f)
+
+        // Resmin sınırlarını hesapla
+        val imageBounds = calculateImageBounds()
+        if (imageBounds != androidx.compose.ui.geometry.Rect.Zero) {
+            // Dairenin yarıçapını hesapla
+            val circleRadius = containerSize.minDimension / 2f * 0.4f
+
+            // Scale uygulandıktan sonra resmin boyutları
+            val scaledImageWidth = imageBounds.width * newScale
+            val scaledImageHeight = imageBounds.height * newScale
+
+            // Translation sınırları - daire resmin içinde kalacak şekilde
+            val maxTransX = (scaledImageWidth - circleRadius * 2f).coerceAtLeast(0f) / 2f
+            val maxTransY = (scaledImageHeight - circleRadius * 2f).coerceAtLeast(0f) / 2f
+
+            scale = newScale
+            translation = androidx.compose.ui.geometry.Offset(
+                (translation.x + panChange.x).coerceIn(-maxTransX, maxTransX),
+                (translation.y + panChange.y).coerceIn(-maxTransY, maxTransY)
+            )
+        } else {
+            scale = newScale
+            translation += panChange
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Üst bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel", color = Color.White)
+                    }
+                    Text(
+                        "Move and Scale",
+                        color = Color.White,
+                        fontWeight = FontWeight.Medium
+                    )
+                    TextButton(
+                        onClick = {
+                            GlobalScope.launch(Dispatchers.IO) {
+                                val uri = cropCircleAndCompress(
+                                    ctx, sourceUri, scale, translation, outSizePx, outQuality
+                                )
+                                withContext(Dispatchers.Main) {
+                                    onCropped(uri)
+                                }
+                            }
+                        }
+                    ) {
+                        Text("Use Photo", color = Color(0xFF0075FF), fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                // Ana crop alanı
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(32.dp)
+                        .onSizeChanged { size ->
+                            containerSize = androidx.compose.ui.geometry.Size(size.width.toFloat(), size.height.toFloat())
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Resim
+                    AsyncImage(
+                        model = sourceUri,
+                        contentDescription = null,
+                        onSuccess = { state ->
+                            val drawable = state.result.drawable
+                            imageSize = androidx.compose.ui.geometry.Size(
+                                drawable.intrinsicWidth.toFloat(),
+                                drawable.intrinsicHeight.toFloat()
+                            )
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer(
+                                scaleX = scale,
+                                scaleY = scale,
+                                translationX = translation.x,
+                                translationY = translation.y
+                            )
+                            .transformable(transform),
+                        contentScale = ContentScale.Fit // Crop yerine Fit kullanıyoruz
+                    )
+
+                    // Sadece beyaz çember - karartma yok
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val circleRadius = size.minDimension / 2f * 0.4f
+                        val center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
+
+                        // Sadece beyaz çember çiz
+                        drawCircle(
+                            color = Color.White,
+                            radius = circleRadius,
+                            center = center,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx())
+                        )
+                    }
+                }
+
+                // Alt alan
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "Pinch to zoom, drag to move",
+                        color = Color.White.copy(alpha = 0.7f),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+    }
+}
+
+
+
+
+// Düzeltilmiş crop fonksiyonu
+fun cropCircleAndCompress(
+    context: Context,
+    source: Uri,
+    scale: Float,
+    translation: androidx.compose.ui.geometry.Offset,
+    outSizePx: Int,
+    outQuality: Int,
+    format: Bitmap.CompressFormat = if (Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.JPEG
+): Uri {
+    val srcBmp: Bitmap = try {
+        if (Build.VERSION.SDK_INT >= 28) {
+            val src = ImageDecoder.createSource(context.contentResolver, source)
+            ImageDecoder.decodeBitmap(src) { decoder, _, _ ->
+                decoder.isMutableRequired = true
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            MediaStore.Images.Media.getBitmap(context.contentResolver, source)
+        }
+    } catch (e: Exception) {
+        throw RuntimeException("Failed to decode bitmap", e)
+    }
+
+    val outBmp = createBitmap(outSizePx, outSizePx, Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(outBmp)
+    canvas.drawColor(android.graphics.Color.TRANSPARENT)
+
+    val matrix = android.graphics.Matrix().apply {
+        // Önce resmi merkeze getir
+        postTranslate(outSizePx / 2f - srcBmp.width / 2f, outSizePx / 2f - srcBmp.height / 2f)
+        // Sonra scale ve translation uygula - merkez referanslı
+        postScale(scale, scale, outSizePx / 2f, outSizePx / 2f)
+        postTranslate(translation.x, translation.y)
+    }
+
+
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    canvas.drawBitmap(srcBmp, matrix, paint)
+
+    // Dairesel maske
+    val mask = createBitmap(outSizePx, outSizePx, Bitmap.Config.ALPHA_8)
+    val maskCanvas = android.graphics.Canvas(mask)
+    val radius = outSizePx * 0.45f
+    val center = outSizePx / 2f
+    val maskPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+
+    maskCanvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+    maskPaint.color = android.graphics.Color.BLACK
+    maskCanvas.drawCircle(center, center, radius, maskPaint)
+
+    paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN)
+    canvas.drawBitmap(mask, 0f, 0f, paint)
+
+    // Cleanup
+    mask.recycle()
+    srcBmp.recycle()
+
+    // Save to file
+    val dir = File(context.filesDir, "avatars").apply { mkdirs() }
+    val ext = when (format) {
+        Bitmap.CompressFormat.PNG -> "png"
+        Bitmap.CompressFormat.JPEG -> "jpg"
+        else -> "webp"
+    }
+    val outFile = File(dir, "avatar_${System.currentTimeMillis()}.$ext")
+
+    FileOutputStream(outFile).use { fos ->
+        outBmp.compress(format, outQuality.coerceIn(0, 100), fos)
+    }
+
+    outBmp.recycle()
+
+    return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", outFile)
 }

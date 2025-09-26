@@ -1,20 +1,30 @@
 package com.example.nexoft.feature.contacts
 
+
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts.RequestPermission
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -24,20 +34,26 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Observer
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.AsyncImage
-import com.example.nexoft.ui.AppToastHost
-import com.example.nexoft.ui.rememberToastHostState
-import com.example.nexoft.ui.DeleteContactSheet
-import androidx.compose.runtime.DisposableEffect
-import androidx.lifecycle.Observer
 import androidx.navigation.NavController
+import coil.compose.AsyncImage
+import com.example.nexoft.navigation.Routes
+import com.example.nexoft.ui.AppToastHost
+import com.example.nexoft.ui.DeleteContactSheet
+import com.example.nexoft.ui.SwipeActionRow
+import com.example.nexoft.ui.rememberToastHostState
+import androidx.core.content.edit
+
 
 @Composable
 fun ContactsScreen(
@@ -49,7 +65,32 @@ fun ContactsScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val ctx = LocalContext.current
     val toastHost = rememberToastHostState()
-    var pendingDeleteId by remember { mutableStateOf<String?>(null) } // id tipini gerekirse Long? yap
+    val focus = LocalFocusManager.current
+
+    // ---- SEARCH HISTORY STATE ----
+    var showHistory by remember { mutableStateOf(false) }
+    val searchHistory = remember { mutableStateListOf<String>() }
+
+    val prefs = remember(ctx) { ctx.getSharedPreferences("contacts_prefs", Context.MODE_PRIVATE) }
+
+    fun persistHistory() {
+        prefs.edit { putString("search_history", searchHistory.joinToString("|")) }
+    }
+
+
+    fun pushHistory(term: String) {
+        val t = term.trim()
+        if (t.isBlank()) return
+        val idx = searchHistory.indexOfFirst { s -> s.equals(t, ignoreCase = true) }
+        if (idx >= 0) searchHistory.removeAt(idx)
+        searchHistory.add(0, t)
+        if (searchHistory.size > 5) searchHistory.removeAt(searchHistory.lastIndex)
+        persistHistory()
+    }
+
+
+    var pendingDeleteId by remember { mutableStateOf<String?>(null) }
+    var openRowId by remember { mutableStateOf<String?>(null) }
 
     // READ_CONTACTS izni & device rozetleri
     val readPermLauncher = rememberLauncherForActivityResult(RequestPermission()) { granted ->
@@ -61,15 +102,15 @@ fun ContactsScreen(
         if (hasRead) vm.refreshDeviceBadges(ctx) else readPermLauncher.launch(Manifest.permission.READ_CONTACTS)
     }
 
-    // Edit/Create dönüş sinyallerini yakala
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    // Edit/Create dönüş sinyalleri
+    val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(Unit) {
         val liveDelete = nav.currentBackStackEntry
             ?.savedStateHandle
             ?.getLiveData<String>("deleteRequestId")
-
         val obsDelete = Observer<String> { id ->
             pendingDeleteId = id
+            openRowId = null
             nav.currentBackStackEntry?.savedStateHandle?.remove<String>("deleteRequestId")
         }
         liveDelete?.observe(lifecycleOwner, obsDelete)
@@ -87,6 +128,11 @@ fun ContactsScreen(
             liveDelete?.removeObserver(obsDelete)
             liveToast?.removeObserver(obsToast)
         }
+    }
+
+    val listState = rememberLazyListState()
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) openRowId = null
     }
 
     Scaffold { inner ->
@@ -120,9 +166,28 @@ fun ContactsScreen(
                 Box(modifier = Modifier.padding(horizontal = 20.dp)) {
                     OutlinedTextField(
                         value = state.searchQuery,
-                        onValueChange = { vm.onEvent(ContactsEvent.OnSearchChanged(it)) },
+                        onValueChange = {
+                            vm.onEvent(ContactsEvent.OnSearchChanged(it))
+                            if (it.isNotBlank()) showHistory = false
+                        },
                         leadingIcon = {
-                            Icon(Icons.Outlined.Search, contentDescription = null, tint = Color(0xFFB0B0B0))
+                            Icon(
+                                Icons.Outlined.Search,
+                                contentDescription = "Search",
+                                tint = Color(0xFFB0B0B0),
+                                modifier = Modifier
+                                    .clickable {
+                                        if (state.searchQuery.isBlank()) {
+                                            // ikon: geçmiş panelini aç/kapat
+                                            showHistory = !showHistory
+                                        } else {
+                                            // ikon: mevcut terimi onayla → geçmişe ekle
+                                            pushHistory(state.searchQuery)
+                                            showHistory = false
+                                            focus.clearFocus()
+                                        }
+                                    }
+                            )
                         },
                         placeholder = {
                             Text(
@@ -144,55 +209,152 @@ fun ContactsScreen(
                             focusedBorderColor = Color(0xFF0075FF),
                             cursorColor = Color(0xFF0075FF)
                         ),
-                        textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp)
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp),
+                        keyboardOptions = KeyboardOptions(
+                            imeAction = ImeAction.Search
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                pushHistory(state.searchQuery)
+                                showHistory = false
+                                focus.clearFocus()
+                            }
+                        )
                     )
+
+                    // --- Search History Panel (textfield ALTINDA) ---
+                    this@Column.AnimatedVisibility(
+                        visible = showHistory && searchHistory.isNotEmpty(),
+                        enter = fadeIn(tween(150)),
+                        exit = fadeOut(tween(150))
+                    ) {
+                        SearchHistoryPanel(
+                            history = searchHistory,
+                            onSelect = { term ->
+                                vm.onEvent(ContactsEvent.OnSearchChanged(term))
+                                pushHistory(term)
+                                showHistory = false
+                                focus.clearFocus()
+                            },
+                            onRemove = { term ->
+                                searchHistory.remove(term)
+                                if (searchHistory.isEmpty()) showHistory = false
+                                persistHistory()
+                            },
+                            onClearAll = {
+                                searchHistory.clear()
+                                showHistory = false
+                                persistHistory()
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(16.dp))
 
-                // Content
+                // ---- Filtre / Sonuçlar ----
+                val q = state.searchQuery.trim().lowercase()
                 val filtered = state.contacts
                     .filter {
-                        val q = state.searchQuery.trim().lowercase()
                         if (q.isBlank()) true else {
                             val name = (it.firstName + " " + it.lastName).trim().lowercase()
                             name.contains(q) || it.phone.lowercase().contains(q)
                         }
                     }
                     .sortedWith(
-                        compareBy {
+                        compareBy<com.example.nexoft.core.model.Contact> {
+                            // startsWith olanlar öne
+                            val name = (it.firstName + " " + it.lastName).trim().lowercase()
+                            val starts = if (q.isNotBlank() && (name.startsWith(q) || it.phone.lowercase().startsWith(q))) 0 else 1
+                            starts
+                        }.thenBy {
                             (it.firstName + " " + it.lastName).trim().ifBlank { it.phone }.lowercase()
                         }
                     )
 
                 if (filtered.isEmpty()) {
-                    EmptyState(onCreateNew)
+                    if (q.isBlank()) {
+                        EmptyState(onCreateNew)
+                    } else {
+                        NoSearchResults()
+                    }
                 } else {
-                    val groups = filtered.groupBy { displayInitial(it) }
-                        .toSortedMap()
+                    val groups = filtered.groupBy { displayInitial(it) }.toSortedMap()
 
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                     ) {
                         groups.forEach { (letter, contacts) ->
                             stickyHeader { SectionHeader(letter = letter) }
 
-                            itemsIndexed(contacts) { index, contact ->
+                            itemsIndexed(contacts, key = { _, c -> c.id }) { index, contact ->
                                 val isFirst = index == 0
-                                val isLast  = index == contacts.lastIndex
+                                val isLast = index == contacts.lastIndex
                                 val shape = when {
                                     isFirst && isLast -> RoundedCornerShape(8.dp)
                                     isFirst -> RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)
-                                    isLast  -> RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp)
-                                    else    -> RoundedCornerShape(0.dp)
+                                    isLast -> RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp)
+                                    else -> RoundedCornerShape(0.dp)
                                 }
 
-                                ContactRow(
-                                    contact = contact,
-                                    shape = shape,
-                                    onClick = { onOpenProfile(contact.id) }
-                                )
+                                SwipeActionRow(
+                                    isOpen = openRowId == contact.id,
+                                    onOpen = { openRowId = contact.id },
+                                    onClose = { if (openRowId == contact.id) openRowId = null },
+                                    onEdit = {
+                                        openRowId = null
+                                        nav.navigate(Routes.editOf(contact.id))
+                                    },
+                                    onDelete = {
+                                        openRowId = null
+                                        pendingDeleteId = contact.id
+                                    },
+                                    actionHeight = 64,
+                                    shape = shape                      // <- oval kenarlar ile uyumlu
+                                ) {
+                                    Surface(
+                                        color = Color.White,
+                                        shape = shape,
+                                        shadowElevation = 0.dp,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 64.dp)
+                                            .clickable(enabled = openRowId == null) {
+                                                onOpenProfile(contact.id)
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Avatar(contact)
+                                            Spacer(Modifier.width(8.dp))
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = displayName(contact),
+                                                    color = Color(0xFF3D3D3D),
+                                                    fontSize = 14.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1
+                                                )
+                                                Text(
+                                                    text = contact.phone,
+                                                    color = Color(0xFF6D6D6D),
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
 
                                 if (isLast) Spacer(Modifier.height(16.dp))
                             }
@@ -201,27 +363,205 @@ fun ContactsScreen(
                 }
             }
 
-            // ---- Delete sheet (koyu, dışı tıklanamaz) ----
+            // ---- Delete sheet ----
             pendingDeleteId?.let { id ->
                 DeleteContactSheet(
                     onDismiss = { pendingDeleteId = null },
                     onConfirm = {
-                        // VM tarafında sil:
-                        // varsa event'in:
-                        // vm.onEvent(ContactsEvent.OnConfirmDelete(id))
-                        vm.deleteContact(id)  // kendi fonksiyonuna uyarlayın
-
+                        vm.deleteContact(id)
                         pendingDeleteId = null
                         toastHost.show("User is deleted!")
                     }
                 )
             }
 
-            // ---- Evrensel toast host ----
+            // ---- Toast host ----
             AppToastHost(hostState = toastHost)
+
+
+            LaunchedEffect(Unit) {
+                val stored = prefs.getString("search_history", null)
+                if (!stored.isNullOrBlank()) {
+                    searchHistory.clear()
+                    searchHistory.addAll(stored.split("|").filter { it.isNotBlank() }.take(5))
+                }
+            }
+
         }
     }
 }
+
+@Composable
+private fun SearchHistoryPanel(
+    history: List<String>,
+    onSelect: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    onClearAll: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        color = Color.White,
+        shape = RoundedCornerShape(8.dp),
+        shadowElevation = 0.dp
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            // Header
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "SEARCH HISTORY",
+                    color = Color(0xFFB0B0B0),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Clear All",
+                    color = Color(0xFF0075FF),
+                    fontSize = 12.sp,
+                    modifier = Modifier.clickable { onClearAll() }
+                )
+            }
+
+            // Items
+            history.forEachIndexed { i, term ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(42.dp)
+                        .padding(horizontal = 12.dp)
+                        .clickable { onSelect(term) },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Close,
+                        contentDescription = "Remove",
+                        tint = Color(0xFF202020),
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clickable {
+                                onRemove(term)
+                            }
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        term,
+                        color = Color(0xFF4F4F4F),
+                        fontSize = 14.sp
+                    )
+                }
+
+                if (i != history.lastIndex) {
+                    HorizontalDivider(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp),
+                        thickness = 1.dp,
+                        color = Color(0xFFF6F6F6)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NoSearchResults() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 33.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // gri daire
+        Box(
+            modifier = Modifier
+                .size(96.dp)
+                .clip(CircleShape)
+                .background(Color(0xFFD1D1D1))
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "No Results",
+            color = Color(0xFF202020),
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "The user you are looking for could not be found.",
+            color = Color(0xFF3D3D3D),
+            fontSize = 16.sp,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+// --- KALAN yardımcılarınız (Avatar, SectionHeader, displayName/Initial, EmptyState, BlueCircleAddButton) sizdeki haliyle aynı ---
+
+
+
+
+@Composable
+private fun Avatar(contact: com.example.nexoft.core.model.Contact) {
+    Box(
+        modifier = Modifier.size(40.dp),
+        contentAlignment = Alignment.BottomEnd
+    ) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clip(CircleShape)
+                .background(Color(0xFFEDFAFF)),
+            contentAlignment = Alignment.Center
+        ) {
+            val photo = contact.photoUrl
+            if (!photo.isNullOrBlank()) {
+                AsyncImage(
+                    model = photo,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Text(
+                    text = displayName(contact).firstOrNull()?.uppercaseChar()?.toString() ?: "#",
+                    color = Color(0xFF0075FF),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        if (contact.isInDevice) {
+            Box(
+                modifier = Modifier
+                    .size(16.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF0075FF))
+                    .border(1.dp, Color.White, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Phone,
+                    contentDescription = "Saved in phone",
+                    tint = Color.White,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(2.dp)
+                )
+            }
+        }
+    }
+}
+
 
 @Composable
 private fun BlueCircleAddButton(onClick: () -> Unit) {
@@ -257,47 +597,6 @@ private fun SectionHeader(letter: Char) {
     }
 }
 
-@Composable
-private fun ContactRow(
-    contact: com.example.nexoft.core.model.Contact,
-    shape: RoundedCornerShape,
-    onClick: () -> Unit
-) {
-    Surface(
-        color = Color.White,
-        shape = shape,
-        shadowElevation = 0.dp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Avatar(contact)
-            Spacer(Modifier.width(8.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = displayName(contact),
-                    color = Color(0xFF3D3D3D),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1
-                )
-                Text(
-                    text = contact.phone,
-                    color = Color(0xFF6D6D6D),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1
-                )
-            }
-        }
-    }
-}
 
 private fun displayName(c: com.example.nexoft.core.model.Contact): String {
     val name = listOf(c.firstName, c.lastName).filter { it.isNotBlank() }.joinToString(" ").trim()
@@ -351,58 +650,3 @@ private fun EmptyState(onCreateNew: () -> Unit) {
     }
 }
 
-@Composable
-private fun Avatar(contact: com.example.nexoft.core.model.Contact) {
-    // DIŞ CONTAINER CLIP YOK ⇒ rozet kesilmez
-    Box(
-        modifier = Modifier.size(40.dp),
-        contentAlignment = Alignment.BottomEnd
-    ) {
-        // İçteki görsel daire içine kırpılır
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .clip(CircleShape)
-                .background(Color(0xFFEDFAFF)),
-            contentAlignment = Alignment.Center
-        ) {
-            val photo = contact.photoUrl
-            if (!photo.isNullOrBlank()) {
-                AsyncImage(
-                    model = photo,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                Text(
-                    text = displayInitial(contact).toString(),
-                    color = Color(0xFF0075FF),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-
-        // Yalnızca VM’den gelen flag’e göre rozet
-        if (contact.isInDevice) {
-            Box(
-                modifier = Modifier
-                    .size(16.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF0075FF))
-                    .border(1.dp, Color.White, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Phone,
-                    contentDescription = "Saved in phone",
-                    tint = Color.White,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(2.dp)
-                )
-            }
-        }
-    }
-}
