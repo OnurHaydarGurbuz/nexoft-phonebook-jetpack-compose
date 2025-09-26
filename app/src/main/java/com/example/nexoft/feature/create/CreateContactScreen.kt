@@ -36,7 +36,8 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.ui.zIndex
-
+import com.example.nexoft.ui.SheetHeader
+import com.example.nexoft.ui.SheetScaffold
 
 @Composable
 fun CreateContactScreen(
@@ -54,13 +55,13 @@ fun CreateContactScreen(
     val doneEnabled = first.isNotBlank() && phone.isNotBlank()
     var showSuccess by remember { mutableStateOf(false) }
 
-
     fun createImageUri(ctx: Context): Uri {
         val time = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val dir = File(ctx.cacheDir, "images").apply { mkdirs() }
         val file = File(dir, "IMG_${time}.jpg")
         return FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
     }
+
     val takePictureLauncher = rememberLauncherForActivityResult(TakePicture()) { success ->
         if (success) photoUri = pendingCameraUri
         pendingCameraUri = null
@@ -82,130 +83,85 @@ fun CreateContactScreen(
         showPickerSheet = false
     }
 
-
-    // Background (Figma: rgba(0,0,0,.45))
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.45f)),
-        contentAlignment = Alignment.TopCenter
-    ) {
-        // The sheet (Figma: top=42px, radius 25px, full width/height)
-        Surface(
-
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = 42.dp), // space above
-            shape = RoundedCornerShape(topStart = 25.dp, topEnd = 25.dp),
-            color = Color.White,
-            tonalElevation = 6.dp,
-            shadowElevation = 40.dp // Figma shows a strong soft shadow
-        )
-        {
-            // Inner content (Figma width 343 => 16dp side paddings on 375)
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp)
-            ) {
-                // Header row (top=30)
-                Spacer(Modifier.height(30.dp))
-                Row(
+    // ---- Ortak sheet iskeleti ----
+    SheetScaffold(topPadding = 42.dp) {
+        SheetHeader(
+            leftLabel = "Cancel",
+            onLeft = onCancel,
+            title = "New Contact",
+            rightContent = {
+                Text(
+                    text = "Done",
+                    color = if (doneEnabled) Color(0xFF0075FF) else Color(0xFFD1D1D1),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
                     modifier = Modifier
-                        .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "Cancel",
-                        color = Color(0xFF0075FF),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.clickable { onCancel() }
-                    )
-                    Text(
-                        "New Contact",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF202020)
-                    )
-                    Text(
-                        "Done",
-                        color = if (doneEnabled) Color(0xFF0075FF) else Color(0xFFD1D1D1),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.clickable(enabled = doneEnabled) {
+                        .padding(vertical = 2.dp)
+                        .clickable(enabled = doneEnabled) {
                             showSuccess = true
                         }
-                    )
-                }
-
-                // Avatar + "Add Photo" (group top=103; gap 32)
-                Spacer(Modifier.height(33.dp))
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(96.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFD1D1D1)), // var(--200)
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (photoUri == null) {
-                            Icon(imageVector = Icons.Filled.Person, contentDescription = null, tint = Color.White)
-                        } else {
-                            AsyncImage(model = photoUri, contentDescription = "photo", modifier = Modifier.fillMaxSize())
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Add Photo",
-                        color = Color(0xFF0075FF),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.clickable { showPickerSheet = true }
-                    )
-                }
-
-                // Fields (gap 32)
-                Spacer(Modifier.height(32.dp))
-                FieldBox(
-                    value = first,
-                    onChange = { first = it },
-                    placeholder = "First Name"
-                )
-                Spacer(Modifier.height(12.dp))
-                FieldBox(
-                    value = last,
-                    onChange = { last = it },
-                    placeholder = "Last Name"
-                )
-                Spacer(Modifier.height(12.dp))
-                FieldBox(
-                    value = phone,
-                    onChange = { phone = it },
-                    placeholder = "Phone Number",
-                    keyboard = KeyboardOptions(imeAction = ImeAction.Done)
                 )
             }
+        )
+
+        // Avatar + "Add Photo"
+        Spacer(Modifier.height(33.dp))
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(96.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFD1D1D1)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (photoUri == null) {
+                    Icon(imageVector = Icons.Filled.Person, contentDescription = null, tint = Color.White)
+                } else {
+                    AsyncImage(model = photoUri, contentDescription = "photo", modifier = Modifier.fillMaxSize())
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Add Photo",
+                color = Color(0xFF0075FF),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.clickable { showPickerSheet = true }
+            )
         }
+
+        // Form alanları
+        Spacer(Modifier.height(32.dp))
+        FieldBox(value = first, onChange = { first = it }, placeholder = "First Name")
+        Spacer(Modifier.height(12.dp))
+        FieldBox(value = last,  onChange = { last = it },  placeholder = "Last Name")
+        Spacer(Modifier.height(12.dp))
+        FieldBox(
+            value = phone,
+            onChange = { phone = it },
+            placeholder = "Phone Number",
+            keyboard = KeyboardOptions(imeAction = ImeAction.Done)
+        )
     }
+
+    // Foto picker sheet
     AddPhotoPickerSheet(
         visible = showPickerSheet,
         onDismiss = { showPickerSheet = false },
         onCamera  = { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) },
         onGallery = { pickMediaLauncher.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
     )
+
+    // Başarılı animasyonu → ardından onDone
     if (showSuccess) {
         OneShotLottie(assetName = "Done.lottie") {
             showSuccess = false
             onDone(first.trim(), last.trim(), phone.trim(), photoUri)
         }
     }
-
-
 }
 
 

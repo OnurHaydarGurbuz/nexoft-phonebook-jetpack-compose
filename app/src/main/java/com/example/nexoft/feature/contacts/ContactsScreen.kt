@@ -32,17 +32,26 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.example.nexoft.ui.AppToastHost
+import com.example.nexoft.ui.rememberToastHostState
+import com.example.nexoft.ui.DeleteContactSheet
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Observer
+import androidx.navigation.NavController
 
 @Composable
 fun ContactsScreen(
     onCreateNew: () -> Unit,
     onOpenProfile: (id: String) -> Unit,
-    vm: ContactsViewModel = viewModel()
+    vm: ContactsViewModel = viewModel(),
+    nav: NavController
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val ctx = LocalContext.current
+    val toastHost = rememberToastHostState()
+    var pendingDeleteId by remember { mutableStateOf<String?>(null) } // id tipini gerekirse Long? yap
 
-    // READ_CONTACTS iznini iste ve yalnızca 1 kez device rozetlerini yükle
+    // READ_CONTACTS izni & device rozetleri
     val readPermLauncher = rememberLauncherForActivityResult(RequestPermission()) { granted ->
         if (granted) vm.refreshDeviceBadges(ctx)
     }
@@ -52,116 +61,164 @@ fun ContactsScreen(
         if (hasRead) vm.refreshDeviceBadges(ctx) else readPermLauncher.launch(Manifest.permission.READ_CONTACTS)
     }
 
+    // Edit/Create dönüş sinyallerini yakala
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(Unit) {
+        val liveDelete = nav.currentBackStackEntry
+            ?.savedStateHandle
+            ?.getLiveData<String>("deleteRequestId")
+
+        val obsDelete = Observer<String> { id ->
+            pendingDeleteId = id
+            nav.currentBackStackEntry?.savedStateHandle?.remove<String>("deleteRequestId")
+        }
+        liveDelete?.observe(lifecycleOwner, obsDelete)
+
+        val liveToast = nav.currentBackStackEntry
+            ?.savedStateHandle
+            ?.getLiveData<String>("globalToast")
+        val obsToast = Observer<String> { msg ->
+            toastHost.show(msg)
+            nav.currentBackStackEntry?.savedStateHandle?.remove<String>("globalToast")
+        }
+        liveToast?.observe(lifecycleOwner, obsToast)
+
+        onDispose {
+            liveDelete?.removeObserver(obsDelete)
+            liveToast?.removeObserver(obsToast)
+        }
+    }
+
     Scaffold { inner ->
-        Column(
+        Box(
             modifier = Modifier
                 .padding(inner)
                 .fillMaxSize()
                 .background(Color(0xFFF6F6F6))
         ) {
+            Column(Modifier.fillMaxSize()) {
 
-            // Header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(top = 40.dp, start = 16.dp, end = 16.dp, bottom = 20.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Contacts",
-                    color = Color(0xFF202020),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.ExtraBold
-                )
-                BlueCircleAddButton(onClick = onCreateNew)
-            }
-
-            // Search
-            Box(modifier = Modifier.padding(horizontal = 20.dp)) {
-                OutlinedTextField(
-                    value = state.searchQuery,
-                    onValueChange = { vm.onEvent(ContactsEvent.OnSearchChanged(it)) },
-                    leadingIcon = {
-                        Icon(Icons.Outlined.Search, contentDescription = null, tint = Color(0xFFB0B0B0))
-                    },
-                    placeholder = {
-                        Text(
-                            "Search contacts by name",
-                            color = Color(0xFFB0B0B0),
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 14.sp
-                        )
-                    },
-                    singleLine = true,
+                // Header
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(50.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        unfocusedContainerColor = Color.White,
-                        focusedContainerColor = Color.White,
-                        unfocusedBorderColor = Color(0xFFE7E7E7),
-                        focusedBorderColor = Color(0xFF0075FF),
-                        cursorColor = Color(0xFF0075FF)
-                    ),
-                    textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp)
-                )
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            // --- CONTENT ---
-            val filtered = state.contacts
-                .filter {
-                    val q = state.searchQuery.trim().lowercase()
-                    if (q.isBlank()) true else {
-                        val name = (it.firstName + " " + it.lastName).trim().lowercase()
-                        name.contains(q) || it.phone.lowercase().contains(q)
-                    }
-                }
-                .sortedWith(
-                    compareBy {
-                        (it.firstName + " " + it.lastName).trim().ifBlank { it.phone }.lowercase()
-                    }
-                )
-
-            if (filtered.isEmpty()) {
-                EmptyState(onCreateNew)
-            } else {
-                val groups = filtered.groupBy { displayInitial(it) }
-                    .toSortedMap()
-
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                        .statusBarsPadding()
+                        .padding(top = 40.dp, start = 16.dp, end = 16.dp, bottom = 20.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    groups.forEach { (letter, contacts) ->
-                        // Section Header (sticky)
-                        stickyHeader { SectionHeader(letter = letter) }
+                    Text(
+                        "Contacts",
+                        color = Color(0xFF202020),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    BlueCircleAddButton(onClick = onCreateNew)
+                }
 
-                        itemsIndexed(contacts) { index, contact ->
-                            val isFirst = index == 0
-                            val isLast  = index == contacts.lastIndex
-                            val shape = when {
-                                isFirst && isLast -> RoundedCornerShape(8.dp)
-                                isFirst -> RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)
-                                isLast  -> RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp)
-                                else    -> RoundedCornerShape(0.dp)
-                            }
-
-                            ContactRow(
-                                contact = contact,
-                                shape = shape,
-                                onClick = { onOpenProfile(contact.id) }
+                // Search
+                Box(modifier = Modifier.padding(horizontal = 20.dp)) {
+                    OutlinedTextField(
+                        value = state.searchQuery,
+                        onValueChange = { vm.onEvent(ContactsEvent.OnSearchChanged(it)) },
+                        leadingIcon = {
+                            Icon(Icons.Outlined.Search, contentDescription = null, tint = Color(0xFFB0B0B0))
+                        },
+                        placeholder = {
+                            Text(
+                                "Search contacts by name",
+                                color = Color(0xFFB0B0B0),
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp
                             )
+                        },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedContainerColor = Color.White,
+                            focusedContainerColor = Color.White,
+                            unfocusedBorderColor = Color(0xFFE7E7E7),
+                            focusedBorderColor = Color(0xFF0075FF),
+                            cursorColor = Color(0xFF0075FF)
+                        ),
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp)
+                    )
+                }
 
-                            if (isLast) Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(16.dp))
+
+                // Content
+                val filtered = state.contacts
+                    .filter {
+                        val q = state.searchQuery.trim().lowercase()
+                        if (q.isBlank()) true else {
+                            val name = (it.firstName + " " + it.lastName).trim().lowercase()
+                            name.contains(q) || it.phone.lowercase().contains(q)
+                        }
+                    }
+                    .sortedWith(
+                        compareBy {
+                            (it.firstName + " " + it.lastName).trim().ifBlank { it.phone }.lowercase()
+                        }
+                    )
+
+                if (filtered.isEmpty()) {
+                    EmptyState(onCreateNew)
+                } else {
+                    val groups = filtered.groupBy { displayInitial(it) }
+                        .toSortedMap()
+
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        groups.forEach { (letter, contacts) ->
+                            stickyHeader { SectionHeader(letter = letter) }
+
+                            itemsIndexed(contacts) { index, contact ->
+                                val isFirst = index == 0
+                                val isLast  = index == contacts.lastIndex
+                                val shape = when {
+                                    isFirst && isLast -> RoundedCornerShape(8.dp)
+                                    isFirst -> RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)
+                                    isLast  -> RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp)
+                                    else    -> RoundedCornerShape(0.dp)
+                                }
+
+                                ContactRow(
+                                    contact = contact,
+                                    shape = shape,
+                                    onClick = { onOpenProfile(contact.id) }
+                                )
+
+                                if (isLast) Spacer(Modifier.height(16.dp))
+                            }
                         }
                     }
                 }
             }
+
+            // ---- Delete sheet (koyu, dışı tıklanamaz) ----
+            pendingDeleteId?.let { id ->
+                DeleteContactSheet(
+                    onDismiss = { pendingDeleteId = null },
+                    onConfirm = {
+                        // VM tarafında sil:
+                        // varsa event'in:
+                        // vm.onEvent(ContactsEvent.OnConfirmDelete(id))
+                        vm.deleteContact(id)  // kendi fonksiyonuna uyarlayın
+
+                        pendingDeleteId = null
+                        toastHost.show("User is deleted!")
+                    }
+                )
+            }
+
+            // ---- Evrensel toast host ----
+            AppToastHost(hostState = toastHost)
         }
     }
 }

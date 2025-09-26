@@ -48,7 +48,8 @@ fun AppNavHost(navController: NavHostController) {
             ContactsScreen(
                 onCreateNew  = { navController.navigate(Routes.CREATE) },
                 onOpenProfile = { id -> navController.navigate(Routes.profileOf(id)) },
-                vm = vm
+                vm = vm,
+                nav = navController
             )
         }
 
@@ -101,13 +102,14 @@ fun AppNavHost(navController: NavHostController) {
                 onBack  = { navController.popBackStack() },
                 onEdit  = { navController.navigate(Routes.editOf(ui.id)) },
                 onDelete = { delId ->
-                    vm.deleteContact(delId)
-                    navController.popBackStack()
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set("deleteRequestId", delId)
+                    navController.popBackStack() // geri: Contacts
                 },
-                onMarkedDeviceSaved = { savedId ->
-                    vm.markAsSavedToDevice(savedId)
-                }
+                onMarkedDeviceSaved = { savedId -> vm.markAsSavedToDevice(savedId) }
             )
+
         }
 
         // EDIT/{id}
@@ -141,17 +143,32 @@ fun AppNavHost(navController: NavHostController) {
             EditContactScreen(
                 initial = ui,
                 onCancel = { navController.popBackStack() },
-                onDone = { updated ->
+                onDone   = { updated ->
                     vm.updateContact(
-                        id    = updated.id,
+                        id = updated.id,
                         first = updated.first,
                         last  = updated.last,
                         phone = updated.phone,
                         photoUri = updated.photo?.toString()
                     )
-                    navController.popBackStack() // geri: Profile veya Contacts (stack’e göre)
+
+                    // 1) Toast'u CONTACTS girişine yaz
+                    val contactsEntry = navController.getBackStackEntry(Routes.CONTACTS)
+                    contactsEntry.savedStateHandle["globalToast"] = "User is updated!"
+
+                    // 2) Doğrudan Contacts'a dön (Profile'ı atla)
+                    navController.popBackStack(Routes.CONTACTS, /* inclusive = */ false)
+                },
+                onRequestDelete = {
+                    // (isteğe bağlı) Delete akışında da doğrudan Contacts'a dönüp sheet açtırmak istersen:
+                    val contactsEntry = navController.getBackStackEntry(Routes.CONTACTS)
+                    contactsEntry.savedStateHandle["deleteRequestId"] = ui.id
+                    navController.popBackStack(Routes.CONTACTS, false)
                 }
             )
+
+
+
         }
     }
 }
