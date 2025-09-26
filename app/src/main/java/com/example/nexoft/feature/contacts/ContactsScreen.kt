@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,15 +30,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Observer
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.AsyncImage
-import com.example.nexoft.ui.AppToastHost
-import com.example.nexoft.ui.rememberToastHostState
-import com.example.nexoft.ui.DeleteContactSheet
-import androidx.compose.runtime.DisposableEffect
-import androidx.lifecycle.Observer
 import androidx.navigation.NavController
+import coil.compose.AsyncImage
+import com.example.nexoft.navigation.Routes
+import com.example.nexoft.ui.AppToastHost
+import com.example.nexoft.ui.DeleteContactSheet
+import com.example.nexoft.ui.SwipeActionRow
+import com.example.nexoft.ui.rememberToastHostState
 
 @Composable
 fun ContactsScreen(
@@ -49,7 +52,8 @@ fun ContactsScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val ctx = LocalContext.current
     val toastHost = rememberToastHostState()
-    var pendingDeleteId by remember { mutableStateOf<String?>(null) } // id tipini gerekirse Long? yap
+    var pendingDeleteId by remember { mutableStateOf<String?>(null) }
+    var openRowId by remember { mutableStateOf<String?>(null) } // sadece 1 satır açık
 
     // READ_CONTACTS izni & device rozetleri
     val readPermLauncher = rememberLauncherForActivityResult(RequestPermission()) { granted ->
@@ -61,15 +65,15 @@ fun ContactsScreen(
         if (hasRead) vm.refreshDeviceBadges(ctx) else readPermLauncher.launch(Manifest.permission.READ_CONTACTS)
     }
 
-    // Edit/Create dönüş sinyallerini yakala
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    // Edit/Create dönüş sinyalleri (toast + delete sheet tetikleme)
+    val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(Unit) {
         val liveDelete = nav.currentBackStackEntry
             ?.savedStateHandle
             ?.getLiveData<String>("deleteRequestId")
-
         val obsDelete = Observer<String> { id ->
             pendingDeleteId = id
+            openRowId = null
             nav.currentBackStackEntry?.savedStateHandle?.remove<String>("deleteRequestId")
         }
         liveDelete?.observe(lifecycleOwner, obsDelete)
@@ -87,6 +91,12 @@ fun ContactsScreen(
             liveDelete?.removeObserver(obsDelete)
             liveToast?.removeObserver(obsToast)
         }
+    }
+
+    val listState = rememberLazyListState()
+    // Liste kayarken açık satırı kapat
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) openRowId = null
     }
 
     Scaffold { inner ->
@@ -172,13 +182,14 @@ fun ContactsScreen(
                         .toSortedMap()
 
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                     ) {
                         groups.forEach { (letter, contacts) ->
                             stickyHeader { SectionHeader(letter = letter) }
 
-                            itemsIndexed(contacts) { index, contact ->
+                            itemsIndexed(contacts, key = { _, c -> c.id }) { index, contact ->
                                 val isFirst = index == 0
                                 val isLast  = index == contacts.lastIndex
                                 val shape = when {
@@ -188,13 +199,64 @@ fun ContactsScreen(
                                     else    -> RoundedCornerShape(0.dp)
                                 }
 
-                                ContactRow(
-                                    contact = contact,
-                                    shape = shape,
-                                    onClick = { onOpenProfile(contact.id) }
-                                )
+                                // --- Swipe + aksiyonlar ---
+                                SwipeActionRow(
+                                    isOpen   = openRowId == contact.id,
+                                    onOpen   = { openRowId = contact.id },
+                                    onClose  = { if (openRowId == contact.id) openRowId = null },
+                                    onEdit   = {
+                                        openRowId = null
+                                        // doğrudan Edit'e git
+                                        nav.navigate(Routes.editOf(contact.id))
+                                    },
+                                    onDelete = {
+                                        openRowId = null
+                                        pendingDeleteId = contact.id
+                                    },
+                                    actionHeight = 64,
+                                    shape = shape
+                                ) {
+                                    Surface(
+                                        color = Color.White,
+                                        shape = shape,
+                                        shadowElevation = 0.dp,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 64.dp)   // <— min yükseklik
+                                            .clickable(enabled = openRowId == null) {
+                                                onOpenProfile(contact.id)
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Avatar(contact)
+                                            Spacer(Modifier.width(8.dp))
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = displayName(contact),
+                                                    color = Color(0xFF3D3D3D),
+                                                    fontSize = 14.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1
+                                                )
+                                                Text(
+                                                    text = contact.phone,
+                                                    color = Color(0xFF6D6D6D),
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
 
-                                if (isLast) Spacer(Modifier.height(16.dp))
+
+                                    if (isLast) Spacer(Modifier.height(16.dp))
                             }
                         }
                     }
@@ -206,11 +268,7 @@ fun ContactsScreen(
                 DeleteContactSheet(
                     onDismiss = { pendingDeleteId = null },
                     onConfirm = {
-                        // VM tarafında sil:
-                        // varsa event'in:
-                        // vm.onEvent(ContactsEvent.OnConfirmDelete(id))
-                        vm.deleteContact(id)  // kendi fonksiyonuna uyarlayın
-
+                        vm.deleteContact(id)
                         pendingDeleteId = null
                         toastHost.show("User is deleted!")
                     }
@@ -222,6 +280,63 @@ fun ContactsScreen(
         }
     }
 }
+
+
+
+
+@Composable
+private fun Avatar(contact: com.example.nexoft.core.model.Contact) {
+    Box(
+        modifier = Modifier.size(40.dp),
+        contentAlignment = Alignment.BottomEnd
+    ) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clip(CircleShape)
+                .background(Color(0xFFEDFAFF)),
+            contentAlignment = Alignment.Center
+        ) {
+            val photo = contact.photoUrl
+            if (!photo.isNullOrBlank()) {
+                AsyncImage(
+                    model = photo,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Text(
+                    text = displayName(contact).firstOrNull()?.uppercaseChar()?.toString() ?: "#",
+                    color = Color(0xFF0075FF),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        if (contact.isInDevice) {
+            Box(
+                modifier = Modifier
+                    .size(16.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF0075FF))
+                    .border(1.dp, Color.White, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Phone,
+                    contentDescription = "Saved in phone",
+                    tint = Color.White,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(2.dp)
+                )
+            }
+        }
+    }
+}
+
 
 @Composable
 private fun BlueCircleAddButton(onClick: () -> Unit) {
@@ -257,47 +372,6 @@ private fun SectionHeader(letter: Char) {
     }
 }
 
-@Composable
-private fun ContactRow(
-    contact: com.example.nexoft.core.model.Contact,
-    shape: RoundedCornerShape,
-    onClick: () -> Unit
-) {
-    Surface(
-        color = Color.White,
-        shape = shape,
-        shadowElevation = 0.dp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Avatar(contact)
-            Spacer(Modifier.width(8.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = displayName(contact),
-                    color = Color(0xFF3D3D3D),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1
-                )
-                Text(
-                    text = contact.phone,
-                    color = Color(0xFF6D6D6D),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1
-                )
-            }
-        }
-    }
-}
 
 private fun displayName(c: com.example.nexoft.core.model.Contact): String {
     val name = listOf(c.firstName, c.lastName).filter { it.isNotBlank() }.joinToString(" ").trim()
@@ -351,58 +425,3 @@ private fun EmptyState(onCreateNew: () -> Unit) {
     }
 }
 
-@Composable
-private fun Avatar(contact: com.example.nexoft.core.model.Contact) {
-    // DIŞ CONTAINER CLIP YOK ⇒ rozet kesilmez
-    Box(
-        modifier = Modifier.size(40.dp),
-        contentAlignment = Alignment.BottomEnd
-    ) {
-        // İçteki görsel daire içine kırpılır
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .clip(CircleShape)
-                .background(Color(0xFFEDFAFF)),
-            contentAlignment = Alignment.Center
-        ) {
-            val photo = contact.photoUrl
-            if (!photo.isNullOrBlank()) {
-                AsyncImage(
-                    model = photo,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                Text(
-                    text = displayInitial(contact).toString(),
-                    color = Color(0xFF0075FF),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-
-        // Yalnızca VM’den gelen flag’e göre rozet
-        if (contact.isInDevice) {
-            Box(
-                modifier = Modifier
-                    .size(16.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF0075FF))
-                    .border(1.dp, Color.White, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Phone,
-                    contentDescription = "Saved in phone",
-                    tint = Color.White,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(2.dp)
-                )
-            }
-        }
-    }
-}
