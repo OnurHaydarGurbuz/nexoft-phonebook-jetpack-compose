@@ -58,6 +58,9 @@ import com.example.nexoft.ui.DeleteContactSheet
 import com.example.nexoft.ui.SwipeActionRow
 import com.example.nexoft.ui.rememberToastHostState
 import androidx.core.content.edit
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.SearchOff
+import androidx.compose.ui.unit.Dp
 
 
 @Composable
@@ -500,13 +503,7 @@ private fun NoSearchResults() {
         //verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // gri daire
-        Box(
-            modifier = Modifier
-                .size(96.dp)
-                .clip(CircleShape)
-                .background(Color(0xFFD1D1D1))
-        )
+        NoSearchIcon(size = 96.dp, color = Color(0xFFD1D1D1))
         Spacer(Modifier.height(8.dp))
         Text(
             "No Results",
@@ -637,12 +634,9 @@ private fun EmptyState(onCreateNew: () -> Unit) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Box(
-            modifier = Modifier
-                .size(90.dp)
-                .clip(CircleShape)
-                .background(Color(0xFFD1D1D1))
-        )
+
+        PersonIcon(size = 90.dp, color = Color(0xFFD1D1D1))
+
         Spacer(Modifier.height(16.dp))
         Text(
             "No Contacts",
@@ -669,3 +663,47 @@ private fun EmptyState(onCreateNew: () -> Unit) {
     }
 }
 
+@Composable
+fun PersonIcon(
+    modifier: Modifier = Modifier,
+    size: Dp = 90.dp,
+    color: Color = Color(0xFFD1D1D1)
+) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(color),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Default.Person,
+            contentDescription = "No contacts",
+            tint = Color.White,
+            modifier = Modifier.size(size * 0.6f)
+        )
+    }
+}
+
+
+@Composable
+fun NoSearchIcon(
+    modifier: Modifier = Modifier,
+    size: Dp = 96.dp,
+    color: Color = Color(0xFFD1D1D1)
+) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(color),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Default.SearchOff,
+            contentDescription = "No search results",
+            tint = Color.White,
+            modifier = Modifier.size(size * 0.58f)
+        )
+    }
+}

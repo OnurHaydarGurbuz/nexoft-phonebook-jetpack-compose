@@ -17,6 +17,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,10 +32,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -55,6 +53,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -64,11 +63,13 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import androidx.core.content.FileProvider
+import androidx.core.graphics.createBitmap
 import coil.compose.AsyncImage
 import com.airbnb.lottie.compose.LottieAnimation
 import com.airbnb.lottie.compose.LottieCompositionSpec
 import com.airbnb.lottie.compose.animateLottieCompositionAsState
 import com.airbnb.lottie.compose.rememberLottieComposition
+import com.example.nexoft.feature.contacts.PersonIcon
 import com.example.nexoft.ui.SheetHeader
 import com.example.nexoft.ui.SheetScaffold
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -81,9 +82,7 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.core.graphics.createBitmap
+
 
 @RequiresApi(Build.VERSION_CODES.R)
 @Composable
@@ -185,7 +184,7 @@ fun CreateContactScreen(
                 contentAlignment = Alignment.Center
             ) {
                 if (photoUri == null) {
-                    Icon(imageVector = Icons.Filled.Person, contentDescription = null, tint = Color.White)
+                    PersonIcon(size = 96.dp, color = Color(0xFFD1D1D1))
                 } else {
                     AsyncImage(
                         model = photoUri,
@@ -669,3 +668,4 @@ fun cropCircleAndCompress(
 
     return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", outFile)
 }
+
