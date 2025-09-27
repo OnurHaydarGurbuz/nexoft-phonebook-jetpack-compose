@@ -1,8 +1,19 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
+
+// --- local.properties / env'den API key yükle ---
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val apiKeyFromLocal = localProps.getProperty("NEXOFT_API_KEY")
+val apiKeyFromEnv = System.getenv("NEXOFT_API_KEY")
+val resolvedApiKey = apiKeyFromLocal ?: apiKeyFromEnv ?: ""
 
 android {
     namespace = "com.example.nexoft"
@@ -16,6 +27,10 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // BuildConfig'lere güvenli yaz
+        buildConfigField("String", "API_KEY", "\"$resolvedApiKey\"")
+        buildConfigField("String", "BASE_URL", "\"http://146.59.52.68:11235/\"")
     }
 
     buildTypes {
@@ -26,7 +41,11 @@ android {
                 "proguard-rules.pro"
             )
         }
+        debug {
+            // istersen debug'ta ekstra şeyler koyabilirsin
+        }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -36,11 +55,11 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
 dependencies {
-
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -49,6 +68,7 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -56,8 +76,6 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
-
-
 
     implementation(platform(libs.androidx.compose.bom.v20250901))
     implementation(libs.androidx.material.icons.extended)
@@ -69,11 +87,15 @@ dependencies {
     implementation(libs.androidx.activity.compose.v1110)
     implementation(libs.androidx.navigation.compose)
 
-    // Coil (görsel yükleme – ileride foto için)
+    // Coil
     implementation(libs.coil.compose)
 
-    // (İleride) Lottie
+    // Lottie
     implementation(libs.lottie.compose)
 
-
+    // Network
+    implementation(libs.retrofit)
+    implementation(libs.converter.moshi)
+    implementation(libs.logging.interceptor)
+    implementation(libs.moshi.kotlin) // <-- moshi-kotlin adaptörü
 }

@@ -1,4 +1,3 @@
-// ContactDeviceUtils.kt
 package com.example.nexoft.feature.contacts
 
 import android.content.ContentProviderOperation
