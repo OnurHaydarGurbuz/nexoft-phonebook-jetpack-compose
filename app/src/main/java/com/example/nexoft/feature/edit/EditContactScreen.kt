@@ -3,14 +3,19 @@ package com.example.nexoft.feature.edit
 import android.Manifest
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts.*
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -18,6 +23,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -30,10 +36,12 @@ import androidx.core.content.FileProvider
 import com.example.nexoft.feature.profile.ContactUi
 import com.example.nexoft.feature.create.FieldBox
 import com.example.nexoft.feature.create.AddPhotoPickerSheet
+import com.example.nexoft.feature.create.PhotoCropperDialog
 import com.example.nexoft.ui.SheetHeader
 import androidx.compose.ui.Alignment
 import com.example.nexoft.ui.SheetScaffold
 
+@RequiresApi(Build.VERSION_CODES.R)
 @Composable
 fun EditContactScreen(
     initial: ContactUi,
@@ -49,28 +57,48 @@ fun EditContactScreen(
     val doneEnabled = first.isNotBlank() && phone.isNotBlank()
     val ctx = LocalContext.current
 
-    // camera/gallery (create'tekiyle aynı)
+    // ---- Cropper state (Create ile aynı akış) ----
+    var showCropper by remember { mutableStateOf(false) }
+    var pendingSource by remember { mutableStateOf<Uri?>(null) }
+
+    // camera/gallery
     fun createImageUri(ctx: Context): Uri {
         val time = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val dir = File(ctx.cacheDir, "images").apply { mkdirs() }
+        val dir = File(ctx.cacheDir, "images").apply { mkdirs() } // cache kullanıyoruz
         val file = File(dir, "IMG_${time}.jpg")
         return FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
     }
-    var pendingUri by remember { mutableStateOf<Uri?>(null) }
+
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+
     val takePictureLauncher = rememberLauncherForActivityResult(TakePicture()) { ok ->
-        if (ok) photo = pendingUri
-        pendingUri = null; showPicker = false
-    }
-    val permLauncher = rememberLauncherForActivityResult(RequestPermission()) { granted ->
-        if (granted) {
-            val u = createImageUri(ctx); pendingUri = u; takePictureLauncher.launch(u)
-        } else showPicker = false
-    }
-    val pickGallery = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
-        if (uri != null) photo = uri; showPicker = false
+        if (ok && pendingCameraUri != null) {
+            pendingSource = pendingCameraUri          // 👈 önce kaynağı croppera gönder
+            showCropper = true
+        }
+        pendingCameraUri = null
+        showPicker = false
     }
 
-    // ---- UI: ortak sheet iskeleti ----
+    val permLauncher = rememberLauncherForActivityResult(RequestPermission()) { granted ->
+        if (granted) {
+            val u = createImageUri(ctx)
+            pendingCameraUri = u
+            takePictureLauncher.launch(u)
+        } else {
+            showPicker = false
+        }
+    }
+
+    val pickGallery = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
+        if (uri != null) {
+            pendingSource = uri                       // 👈 galeri de önce croppera
+            showCropper = true
+        }
+        showPicker = false
+    }
+
+    // ---- UI: sheet iskeleti ----
     SheetScaffold(topPadding = 42.dp) {
         SheetHeader(
             leftLabel = "Cancel",
@@ -108,8 +136,25 @@ fun EditContactScreen(
                 Modifier
                     .size(96.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFFD1D1D1))
-            ) { AsyncImage(model = photo, contentDescription = null) }
+                    .background(Color(0xFFD1D1D1)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (photo != null) {
+                    AsyncImage(
+                        model = photo,
+                        contentDescription = "photo",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.Person,
+                        contentDescription = "placeholder",
+                        tint = Color.White,
+                        modifier = Modifier.size(56.dp)
+                    )
+                }
+            }
 
             Spacer(Modifier.height(8.dp))
 
@@ -139,16 +184,32 @@ fun EditContactScreen(
             color = Color(0xFFFF3B30),
             fontWeight = FontWeight.Bold,
             modifier = Modifier
-                .align(Alignment.CenterHorizontally) // ColumnScope içindeyken çalışır
+                .align(Alignment.CenterHorizontally)
                 .clickable { onRequestDelete() }
         )
     }
 
-
+    // Foto picker sheet
     AddPhotoPickerSheet(
         visible = showPicker,
         onDismiss = { showPicker = false },
         onCamera  = { permLauncher.launch(Manifest.permission.CAMERA) },
         onGallery = { pickGallery.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
     )
+
+    // 👇 Cropper: Create'tekiyle aynı mantık
+    if (showCropper && pendingSource != null) {
+        PhotoCropperDialog(
+            sourceUri = pendingSource!!,
+            onDismiss = {
+                showCropper = false
+                pendingSource = null
+            },
+            onCropped = { processed ->
+                showCropper = false
+                pendingSource = null
+                photo = processed       // kırpılmış görseli kaydet
+            }
+        )
+    }
 }

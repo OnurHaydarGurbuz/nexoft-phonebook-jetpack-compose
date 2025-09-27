@@ -1,5 +1,6 @@
 package com.example.nexoft.feature.contacts
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.ContactsContract
@@ -25,7 +26,7 @@ data class ContactsState(
 
 sealed class ContactsEvent {
     data class OnSearchChanged(val q: String) : ContactsEvent()
-    object OnErrorDismissed : ContactsEvent()
+    data object OnErrorDismissed : ContactsEvent()
 }
 
 class ContactsViewModel : ViewModel() {
@@ -43,11 +44,11 @@ class ContactsViewModel : ViewModel() {
     // ---- Log etiketi ----
     private val TAG = "ContactsVM"
 
-    // ---- Uygulama açılışında: sadece GET ----
+
     init {
         fetchAllFromBackend()
 
-        // 🔧 Test fonksiyonları - geliştirme sırasında gerekirse açın:
+        // 🔧 Geliştirme esnasında açıp test edebilirsin:
         // seedOnceAndRefetch()
         // smokeTestBackend()
     }
@@ -82,53 +83,61 @@ class ContactsViewModel : ViewModel() {
         }
     }
 
-    /** Manuel refresh fonksiyonu - kullanıcı çekip yenilediğinde */
-    fun refreshContacts() {
-        fetchAllFromBackend()
-    }
+    /** Manuel refresh: kullanıcı çekip yenilediğinde çağır. */
+    fun refreshContacts() = fetchAllFromBackend()
 
-    /** Backend'e kişi ekleme + UI güncelleme */
-    fun addContact(first: String, last: String, phone: String, photoUri: String?) {
+    /**
+     * REMOTE Create:
+     * - (varsa) foto URI → geçici File
+     * - uploadImage + create
+     * - UI state’e ekle
+     */
+    fun addContactRemote(
+        ctx: Context,
+        first: String,
+        last: String,
+        phone: String,
+        photoUri: String?
+    ) {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true, error = null) }
-
             try {
-                val newContact = com.example.nexoft.core.model.Contact(
-                    id = "",
-                    firstName = first,
-                    lastName = last,
-                    phone = phone,
-                    photoUrl = photoUri,
-                    isInDevice = cachedDeviceNumbers.contains(normalizePhone(phone))
+                val file = fileFromUriOrNull(ctx, photoUri)
+
+                val created = remote.create(
+                    com.example.nexoft.core.model.Contact(
+                        id = "",
+                        firstName = first.trim(),
+                        lastName = last.trim(),
+                        phone = phone.trim(),
+                        photoUrl = null,
+                        isInDevice = cachedDeviceNumbers.contains(normalizePhone(phone))
+                    ),
+                    photoFile = file
                 )
 
-                // Backend'e gönder
-                val created = remote.create(newContact, photoFile = null)
-                Log.d(TAG, "Kişi eklendi, id=${created.id}")
+                val final = created.copy(
+                    isInDevice = cachedDeviceNumbers.contains(normalizePhone(created.phone))
+                )
 
-                // UI state'i güncelle - backend'den dönen veriyi kullan
-                _state.update {
-                    it.copy(
-                        contacts = it.contacts + created,
+                _state.update { s ->
+                    s.copy(
+                        contacts = s.contacts + final,
                         isLoading = false,
                         error = null
                     )
                 }
-
+                Log.d(TAG, "REMOTE/CREATE başarılı, id=${created.id}")
             } catch (e: Exception) {
-                _state.update {
-                    it.copy(
-                        isLoading = false,
-                        error = "Kişi eklenemedi: ${e.message}"
-                    )
-                }
-                Log.e(TAG, "Kişi ekleme hatası: ${e.message}", e)
+                _state.update { it.copy(isLoading = false, error = "Kişi eklenemedi: ${e.message}") }
+                Log.e(TAG, "REMOTE/CREATE hata: ${e.message}", e)
             }
         }
     }
 
-    /** Backend'e kişi güncelleme + UI güncelleme */
-    fun updateContact(
+
+    fun updateContactRemote(
+        ctx: Context,
         id: String,
         first: String,
         last: String,
@@ -137,55 +146,47 @@ class ContactsViewModel : ViewModel() {
     ) {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true, error = null) }
-
             try {
-                val updatedContact = com.example.nexoft.core.model.Contact(
-                    id = id,
-                    firstName = first,
-                    lastName = last,
-                    phone = phone,
-                    photoUrl = photoUri,
-                    isInDevice = cachedDeviceNumbers.contains(normalizePhone(phone))
+                val file = fileFromUriOrNull(ctx, photoUri)
+
+                val base = state.value.contacts.firstOrNull { it.id == id }
+                    ?: com.example.nexoft.core.model.Contact(
+                        id = id, firstName = "", lastName = "", phone = "", photoUrl = null, isInDevice = false
+                    )
+
+                val toSave = base.copy(
+                    firstName = first.trim(),
+                    lastName = last.trim(),
+                    phone = phone.trim()
                 )
 
-                // Backend'e gönder
-                val updated = remote.update(updatedContact, photoFile = null)
-                Log.d(TAG, "Kişi güncellendi, id=${updated.id}")
+                val updated = remote.update(toSave, photoFile = file)
 
-                // UI state'i güncelle
+                val final = updated.copy(
+                    isInDevice = cachedDeviceNumbers.contains(normalizePhone(updated.phone))
+                )
+
                 _state.update { s ->
                     s.copy(
-                        contacts = s.contacts.map { c ->
-                            if (c.id == id) updated else c
-                        },
+                        contacts = s.contacts.map { if (it.id == id) final else it },
                         isLoading = false,
                         error = null
                     )
                 }
-
+                Log.d(TAG, "REMOTE/UPDATE başarılı, id=${updated.id}")
             } catch (e: Exception) {
-                _state.update {
-                    it.copy(
-                        isLoading = false,
-                        error = "Kişi güncellenemedi: ${e.message}"
-                    )
-                }
-                Log.e(TAG, "Kişi güncelleme hatası: ${e.message}", e)
+                _state.update { it.copy(isLoading = false, error = "Kişi güncellenemedi: ${e.message}") }
+                Log.e(TAG, "REMOTE/UPDATE hata: ${e.message}", e)
             }
         }
     }
 
-    /** Backend'den kişi silme + UI güncelleme */
+
     fun deleteContact(id: String) {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true, error = null) }
-
             try {
-                // Backend'den sil
                 remote.delete(id)
-                Log.d(TAG, "Kişi silindi, id=$id")
-
-                // UI state'ten çıkar
                 _state.update { s ->
                     s.copy(
                         contacts = s.contacts.filterNot { it.id == id },
@@ -193,22 +194,15 @@ class ContactsViewModel : ViewModel() {
                         error = null
                     )
                 }
-
+                Log.d(TAG, "REMOTE/DELETE başarılı, id=$id")
             } catch (e: Exception) {
-                _state.update {
-                    it.copy(
-                        isLoading = false,
-                        error = "Kişi silinemedi: ${e.message}"
-                    )
-                }
-                Log.e(TAG, "Kişi silme hatası: ${e.message}", e)
+                _state.update { it.copy(isLoading = false, error = "Kişi silinemedi: ${e.message}") }
+                Log.e(TAG, "REMOTE/DELETE hata: ${e.message}", e)
             }
         }
     }
 
-    // endregion --------- BACKEND OPERASYONLARI ---------
 
-    // region --------- TEST FONKSİYONLARI (İSTEĞE BAĞLI) ---------
 
     /** (İSTEĞE BAĞLI) Tek seferlik tohumlama: 1 kayıt ekle → tekrar GET */
     private var seededOnce = false
@@ -228,7 +222,6 @@ class ContactsViewModel : ViewModel() {
                 )
                 val created = remote.create(yeni, photoFile = null)
                 Log.d(TAG, "SEED: Kişi oluşturuldu, id=${created.id}")
-
                 fetchAllFromBackend()
             } catch (e: Exception) {
                 Log.e(TAG, "SEED: Kişi oluşturma hatası: ${e.message}", e)
@@ -272,9 +265,6 @@ class ContactsViewModel : ViewModel() {
         }
     }
 
-    // endregion --------- TEST FONKSİYONLARI ---------
-
-    // region --------- UI EVENT HANDLİNG ---------
 
     fun onEvent(event: ContactsEvent) {
         when (event) {
@@ -319,9 +309,25 @@ class ContactsViewModel : ViewModel() {
         }
     }
 
-    // endregion --------- UI EVENT HANDLİNG ---------
 
-    // region --------- Yardımcılar ---------
+
+    @SuppressLint("UseKtx")
+    private fun fileFromUriOrNull(ctx: Context, uriString: String?): java.io.File? {
+        if (uriString.isNullOrBlank()) return null
+        return runCatching {
+            val uri = android.net.Uri.parse(uriString)
+            val cr = ctx.contentResolver
+            val mime = cr.getType(uri) ?: "image/jpeg"
+            val ext = when {
+                mime.contains("png") -> "png"
+                else -> "jpg"
+            }
+            val input = cr.openInputStream(uri) ?: return null
+            val tmp = java.io.File.createTempFile("upload_", ".$ext", ctx.cacheDir)
+            input.use { ins -> tmp.outputStream().use { outs -> ins.copyTo(outs) } }
+            tmp
+        }.getOrNull()
+    }
 
     private fun hasReadContacts(ctx: Context): Boolean =
         ContextCompat.checkSelfPermission(
@@ -342,15 +348,14 @@ class ContactsViewModel : ViewModel() {
                 }
             }
         } catch (_: SecurityException) {
-            // izin yoksa sessiz
+
         } catch (_: Throwable) {
-            // diğer hatalar sessiz
+
         }
         return list
     }
 
-    /** Basit normalize: sadece rakamları bırak. */
+
     private fun normalizePhone(raw: String): String = raw.filter { it.isDigit() }
 
-    // endregion --------- Yardımcılar ---------
 }

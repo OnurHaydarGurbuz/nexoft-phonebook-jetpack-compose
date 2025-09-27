@@ -14,11 +14,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -87,11 +89,30 @@ fun ContactProfileScreen(
         Spacer(Modifier.height(33.dp))
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(
-                Modifier.size(96.dp).clip(CircleShape).background(Color(0xFFD1D1D1)),
+                Modifier
+                    .size(96.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFD1D1D1)),
                 contentAlignment = Alignment.Center
-            ) { AsyncImage(model = contact.photo, contentDescription = "photo") }
-            Spacer(Modifier.height(8.dp))
-            Text("Change Photo", color = Color(0xFF0075FF), fontWeight = FontWeight.Bold)
+            ) {
+                if (contact.photo != null) {
+                    AsyncImage(
+                        model = contact.photo,
+                        contentDescription = "photo",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.Person,
+                        contentDescription = "placeholder",
+                        tint = Color.White,
+                        modifier = Modifier.size(56.dp)
+                    )
+                }
+            }
+
+            //Text("Change Photo", color = Color(0xFF0075FF), fontWeight = FontWeight.Bold)
         }
 
         Spacer(Modifier.height(32.dp))

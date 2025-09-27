@@ -1,5 +1,6 @@
 package com.example.nexoft.navigation
 
+import android.os.Build
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -19,6 +20,7 @@ import com.example.nexoft.feature.profile.ContactProfileScreen
 import com.example.nexoft.feature.profile.ContactUi
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import androidx.compose.ui.platform.LocalContext
 
 object Routes {
     const val CONTACTS = "contacts"
@@ -59,14 +61,29 @@ fun AppNavHost(navController: NavHostController) {
                 navController.getBackStackEntry(Routes.CONTACTS)
             }
             val vm: ContactsViewModel = viewModel(parentEntry)
+            val ctx = LocalContext.current
 
-            CreateContactScreen(
-                onCancel = { navController.popBackStack() },
-                onDone = { first, last, phone, photoUri ->
-                    vm.addContact(first, last, phone, photoUri?.toString())
-                    navController.popBackStack() // geri: Contacts
-                }
-            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                CreateContactScreen(
+                    onCancel = { navController.popBackStack() },
+                    onDone = { first, last, phone, photoUri ->
+
+                        vm.addContactRemote(
+                            ctx = ctx,
+                            first = first,
+                            last = last,
+                            phone = phone,
+                            photoUri = photoUri?.toString()
+                        )
+
+                        navController.previousBackStackEntry
+                            ?.savedStateHandle
+                            ?.set("globalToast", "User created!")
+
+                        navController.popBackStack()
+                    }
+                )
+            }
         }
 
         // PROFILE/{id}
@@ -109,7 +126,6 @@ fun AppNavHost(navController: NavHostController) {
                 },
                 onMarkedDeviceSaved = { savedId -> vm.markAsSavedToDevice(savedId) }
             )
-
         }
 
         // EDIT/{id}
@@ -121,6 +137,7 @@ fun AppNavHost(navController: NavHostController) {
                 navController.getBackStackEntry(Routes.CONTACTS)
             }
             val vm: ContactsViewModel = viewModel(parentEntry)
+            val ctx = LocalContext.current
 
             val id = backStackEntry.arguments?.getString("id") ?: run {
                 navController.popBackStack(); return@composable
@@ -144,31 +161,25 @@ fun AppNavHost(navController: NavHostController) {
                 initial = ui,
                 onCancel = { navController.popBackStack() },
                 onDone   = { updated ->
-                    vm.updateContact(
+
+                    vm.updateContactRemote(
+                        ctx = ctx,
                         id = updated.id,
                         first = updated.first,
                         last  = updated.last,
                         phone = updated.phone,
                         photoUri = updated.photo?.toString()
                     )
-
-                    // 1) Toast'u CONTACTS girişine yaz
                     val contactsEntry = navController.getBackStackEntry(Routes.CONTACTS)
                     contactsEntry.savedStateHandle["globalToast"] = "User is updated!"
-
-                    // 2) Doğrudan Contacts'a dön (Profile'ı atla)
                     navController.popBackStack(Routes.CONTACTS, /* inclusive = */ false)
                 },
                 onRequestDelete = {
-                    // (isteğe bağlı) Delete akışında da doğrudan Contacts'a dönüp sheet açtırmak istersen:
                     val contactsEntry = navController.getBackStackEntry(Routes.CONTACTS)
                     contactsEntry.savedStateHandle["deleteRequestId"] = ui.id
                     navController.popBackStack(Routes.CONTACTS, false)
                 }
             )
-
-
-
         }
     }
 }

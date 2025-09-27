@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -50,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -106,17 +108,15 @@ fun CreateContactScreen(
     // Düzeltilmiş createImageUri fonksiyonu
     fun createImageUri(ctx: Context): Uri {
         val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val imageFileName = "JPEG_${timeStamp}_"
-
-        // Cache yerine external files directory kullan
-        val storageDir = File(ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES), "camera")
-        if (!storageDir.exists()) {
-            storageDir.mkdirs()
-        }
-
-        val imageFile = File.createTempFile(imageFileName, ".jpg", storageDir)
+        val imageFileName = "JPEG_${timeStamp}.jpg"
+        val storageDir = ctx.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+        storageDir?.mkdirs()
+        val imageFile = File(storageDir, imageFileName)
         return FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", imageFile)
     }
+
+
+
 
     val takePictureLauncher = rememberLauncherForActivityResult(TakePicture()) { success ->
         if (success && pendingCameraUri != null) {
@@ -418,59 +418,69 @@ fun PhotoCropperDialog(
     var imageSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
     var containerSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
 
-    // Resmin gerçek boyutlarını ve sınırlarını hesaplayan fonksiyon
+    // Resmin container içinde FIT boyutlarını veren yardımcı
     fun calculateImageBounds(): androidx.compose.ui.geometry.Rect {
         if (imageSize == androidx.compose.ui.geometry.Size.Zero || containerSize == androidx.compose.ui.geometry.Size.Zero) {
             return androidx.compose.ui.geometry.Rect.Zero
         }
-
-        // Resmin container içindeki fit boyutlarını hesapla
         val containerRatio = containerSize.width / containerSize.height
         val imageRatio = imageSize.width / imageSize.height
 
         val (fitWidth, fitHeight) = if (imageRatio > containerRatio) {
-            // Resim daha geniş - width'e göre fit et
-            containerSize.width to containerSize.width / imageRatio
+            containerSize.width to (containerSize.width / imageRatio)
         } else {
-            // Resim daha uzun - height'e göre fit et
-            containerSize.height * imageRatio to containerSize.height
+            (containerSize.height * imageRatio) to containerSize.height
         }
 
-        // Resmin container içindeki pozisyonu (ortalanmış)
-        val imageLeft = (containerSize.width - fitWidth) / 2f
-        val imageTop = (containerSize.height - fitHeight) / 2f
-
+        val left = (containerSize.width - fitWidth) / 2f
+        val top  = (containerSize.height - fitHeight) / 2f
         return androidx.compose.ui.geometry.Rect(
-            offset = androidx.compose.ui.geometry.Offset(imageLeft, imageTop),
+            offset = androidx.compose.ui.geometry.Offset(left, top),
             size = androidx.compose.ui.geometry.Size(fitWidth, fitHeight)
         )
     }
 
+    // Jest: pan/zoom sınırları daireye göre hesaplanır
     val transform = rememberTransformableState { zoomChange, panChange, _ ->
-        val newScale = (scale * zoomChange).coerceIn(0.5f, 4f)
+        val bounds = calculateImageBounds()
+        if (bounds == androidx.compose.ui.geometry.Rect.Zero) return@rememberTransformableState
 
-        // Resmin sınırlarını hesapla
-        val imageBounds = calculateImageBounds()
-        if (imageBounds != androidx.compose.ui.geometry.Rect.Zero) {
-            // Dairenin yarıçapını hesapla
-            val circleRadius = containerSize.minDimension / 2f * 0.4f
+        val circleRadius = containerSize.minDimension * 0.4f
+        val circleDiameter = circleRadius * 2f
 
-            // Scale uygulandıktan sonra resmin boyutları
-            val scaledImageWidth = imageBounds.width * newScale
-            val scaledImageHeight = imageBounds.height * newScale
+        // daireyi kaplayacak minimum ölçek
+        val minScaleX = circleDiameter / bounds.width
+        val minScaleY = circleDiameter / bounds.height
+        val minScaleNeeded = maxOf(minScaleX, minScaleY)
 
-            // Translation sınırları - daire resmin içinde kalacak şekilde
-            val maxTransX = (scaledImageWidth - circleRadius * 2f).coerceAtLeast(0f) / 2f
-            val maxTransY = (scaledImageHeight - circleRadius * 2f).coerceAtLeast(0f) / 2f
+        val newScale = (scale * zoomChange).coerceIn(minScaleNeeded, 4f)
 
-            scale = newScale
-            translation = androidx.compose.ui.geometry.Offset(
-                (translation.x + panChange.x).coerceIn(-maxTransX, maxTransX),
-                (translation.y + panChange.y).coerceIn(-maxTransY, maxTransY)
-            )
-        } else {
-            scale = newScale
-            translation += panChange
+        val scaledW = bounds.width  * newScale
+        val scaledH = bounds.height * newScale
+
+        val maxTransX = ((scaledW - circleDiameter) / 2f).coerceAtLeast(0f)
+        val maxTransY = ((scaledH - circleDiameter) / 2f).coerceAtLeast(0f)
+
+        scale = newScale
+        translation = androidx.compose.ui.geometry.Offset(
+            (translation.x + panChange.x).coerceIn(-maxTransX, maxTransX),
+            (translation.y + panChange.y).coerceIn(-maxTransY, maxTransY)
+        )
+    }
+
+    // İlk açılışta min scale uygula ve ortala
+    LaunchedEffect(imageSize, containerSize) {
+        val bounds = calculateImageBounds()
+        if (bounds != androidx.compose.ui.geometry.Rect.Zero) {
+            val circleRadius = containerSize.minDimension * 0.4f
+            val circleDiameter = circleRadius * 2f
+            val minScaleX = circleDiameter / bounds.width
+            val minScaleY = circleDiameter / bounds.height
+            val need = maxOf(minScaleX, minScaleY)
+            if (need.isFinite() && need > 0f) {
+                scale = need
+                translation = androidx.compose.ui.geometry.Offset.Zero
+            }
         }
     }
 
@@ -495,27 +505,25 @@ fun PhotoCropperDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                        .padding(16.dp)
+                        .zIndex(1f),
+                horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = onDismiss) {
                         Text("Cancel", color = Color.White)
                     }
-                    Text(
-                        "Move and Scale",
-                        color = Color.White,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Text("Move and Scale", color = Color.White, fontWeight = FontWeight.Medium)
                     TextButton(
                         onClick = {
                             GlobalScope.launch(Dispatchers.IO) {
                                 val uri = cropCircleAndCompress(
-                                    ctx, sourceUri, scale, translation, outSizePx, outQuality
+                                    ctx, sourceUri, scale, translation,
+                                    containerSize,   // 👈 EKLENDİ
+                                    imageSize,
+                                    outSizePx, outQuality,
                                 )
-                                withContext(Dispatchers.Main) {
-                                    onCropped(uri)
-                                }
+                                withContext(Dispatchers.Main) { onCropped(uri) }
                             }
                         }
                     ) {
@@ -529,9 +537,13 @@ fun PhotoCropperDialog(
                         .weight(1f)
                         .fillMaxWidth()
                         .padding(32.dp)
+                        .clipToBounds()
                         .onSizeChanged { size ->
-                            containerSize = androidx.compose.ui.geometry.Size(size.width.toFloat(), size.height.toFloat())
-                        },
+                            containerSize = androidx.compose.ui.geometry.Size(
+                                size.width.toFloat(), size.height.toFloat()
+                            )
+                        }
+                        .transformable(transform), // 👈 jest burada
                     contentAlignment = Alignment.Center
                 ) {
                     // Resim
@@ -539,10 +551,10 @@ fun PhotoCropperDialog(
                         model = sourceUri,
                         contentDescription = null,
                         onSuccess = { state ->
-                            val drawable = state.result.drawable
+                            val d = state.result.drawable
                             imageSize = androidx.compose.ui.geometry.Size(
-                                drawable.intrinsicWidth.toFloat(),
-                                drawable.intrinsicHeight.toFloat()
+                                d.intrinsicWidth.toFloat(),
+                                d.intrinsicHeight.toFloat()
                             )
                         },
                         modifier = Modifier
@@ -552,17 +564,14 @@ fun PhotoCropperDialog(
                                 scaleY = scale,
                                 translationX = translation.x,
                                 translationY = translation.y
-                            )
-                            .transformable(transform),
-                        contentScale = ContentScale.Fit // Crop yerine Fit kullanıyoruz
+                            ),
+                        contentScale = ContentScale.Fit
                     )
 
-                    // Sadece beyaz çember - karartma yok
+                    // Üstte sadece beyaz çember
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val circleRadius = size.minDimension / 2f * 0.4f
+                        val circleRadius = size.minDimension * 0.4f
                         val center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
-
-                        // Sadece beyaz çember çiz
                         drawCircle(
                             color = Color.White,
                             radius = circleRadius,
@@ -572,7 +581,7 @@ fun PhotoCropperDialog(
                     }
                 }
 
-                // Alt alan
+                // Alt ipucu
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -593,16 +602,18 @@ fun PhotoCropperDialog(
 
 
 
-// Düzeltilmiş crop fonksiyonu
 fun cropCircleAndCompress(
     context: Context,
     source: Uri,
-    scale: Float,
-    translation: androidx.compose.ui.geometry.Offset,
+    scale: Float,                                   // UI'daki ölçek
+    translation: androidx.compose.ui.geometry.Offset, // UI'daki pan (container pikselinde)
+    containerSize: androidx.compose.ui.geometry.Size, // UI container boyutu (onSizeChanged ile tuttuğun)
+    imageSize: androidx.compose.ui.geometry.Size,     // Drawable intrinsic size (onSuccess'ta aldığın)
     outSizePx: Int,
     outQuality: Int,
-    format: Bitmap.CompressFormat = if (Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.JPEG
+    format: Bitmap.CompressFormat = Bitmap.CompressFormat.JPEG
 ): Uri {
+    // 1) Kaynağı oku
     val srcBmp: Bitmap = try {
         if (Build.VERSION.SDK_INT >= 28) {
             val src = ImageDecoder.createSource(context.contentResolver, source)
@@ -621,37 +632,79 @@ fun cropCircleAndCompress(
     val canvas = android.graphics.Canvas(outBmp)
     canvas.drawColor(android.graphics.Color.TRANSPARENT)
 
-    val matrix = android.graphics.Matrix().apply {
-        // Önce resmi merkeze getir
-        postTranslate(outSizePx / 2f - srcBmp.width / 2f, outSizePx / 2f - srcBmp.height / 2f)
-        // Sonra scale ve translation uygula - merkez referanslı
-        postScale(scale, scale, outSizePx / 2f, outSizePx / 2f)
+    val cw = containerSize.width.coerceAtLeast(1f)
+    val ch = containerSize.height.coerceAtLeast(1f)
+
+    // 2) UI'daki FIT yerleşimi (AsyncImage ContentScale.Fit ile aynı)
+    val srcW = srcBmp.width.toFloat()
+    val srcH = srcBmp.height.toFloat()
+    val imageRatio = srcW / srcH
+    val containerRatio = cw / ch
+
+    val fitW: Float
+    val fitH: Float
+    if (imageRatio > containerRatio) {
+        fitW = cw
+        fitH = cw / imageRatio
+    } else {
+        fitH = ch
+        fitW = ch * imageRatio
+    }
+    val fitLeft = (cw - fitW) / 2f
+    val fitTop  = (ch - fitH) / 2f
+
+    // 3) UI matrisini kur: FIT -> merkezde scale -> pan
+    val m = android.graphics.Matrix().apply {
+        // FIT: src -> container'daki fitRect
+        postScale(fitW / srcW, fitH / srcH)
+        postTranslate(fitLeft, fitTop)
+
+        // UI scale: container merkezine göre
+        postScale(scale, scale, cw / 2f, ch / 2f)
+
+        // UI pan (container pikselinde)
         postTranslate(translation.x, translation.y)
     }
 
+    // 4) Container uzayını output tuvaline eşle (daire ölçeği birebir olsun)
+    // UI'daki daire çapı: 0.8 * min(container)
+    // Output'taki daire çapı: 0.8 * outSizePx
+    // Oran: K = outSizePx / min(container)
+    val containerMin = minOf(cw, ch).coerceAtLeast(1f)
+    val K = outSizePx / containerMin
 
+    // Container merkezini out canvas merkezine taşı ve ölçekle
+    m.postTranslate(-cw / 2f, -ch / 2f)
+    m.postScale(K, K)
+    m.postTranslate(outSizePx / 2f, outSizePx / 2f)
+
+    // 5) Çiz
     val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
-    canvas.drawBitmap(srcBmp, matrix, paint)
+    canvas.drawBitmap(srcBmp, m, paint)
 
-    // Dairesel maske
+    // 6) Dairesel maske (UI ile aynı oran: 0.40f)
     val mask = createBitmap(outSizePx, outSizePx, Bitmap.Config.ALPHA_8)
     val maskCanvas = android.graphics.Canvas(mask)
-    val radius = outSizePx * 0.45f
+    val radius = outSizePx * 0.40f
     val center = outSizePx / 2f
-    val maskPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
-
+    val maskPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.BLACK
+    }
     maskCanvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
-    maskPaint.color = android.graphics.Color.BLACK
     maskCanvas.drawCircle(center, center, radius, maskPaint)
 
+    // Xfermode güvenli katmanla uygula
+    val save = canvas.saveLayer(0f, 0f, outSizePx.toFloat(), outSizePx.toFloat(), null)
     paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN)
     canvas.drawBitmap(mask, 0f, 0f, paint)
+    paint.xfermode = null
+    canvas.restoreToCount(save)
 
-    // Cleanup
+    // Temizlik
     mask.recycle()
     srcBmp.recycle()
 
-    // Save to file
+    // 7) Dosyaya yaz
     val dir = File(context.filesDir, "avatars").apply { mkdirs() }
     val ext = when (format) {
         Bitmap.CompressFormat.PNG -> "png"
@@ -659,11 +712,9 @@ fun cropCircleAndCompress(
         else -> "webp"
     }
     val outFile = File(dir, "avatar_${System.currentTimeMillis()}.$ext")
-
     FileOutputStream(outFile).use { fos ->
-        outBmp.compress(format, outQuality.coerceIn(0, 100), fos)
+        outBmp.compress(format, outQuality.coerceIn(70, 100), fos)
     }
-
     outBmp.recycle()
 
     return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", outFile)
