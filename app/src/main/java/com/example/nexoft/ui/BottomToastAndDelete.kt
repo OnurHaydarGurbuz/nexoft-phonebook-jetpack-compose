@@ -15,14 +15,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 
 // ---- 1. Primitive ----
 @Composable
 fun BottomToast(
     text: String,
     onGone: () -> Unit,
-    durationMs: Int = 1600,
-    accent: Color = Color(0xFF12B76A),     // Figma’daki yeşil
+    durationMs: Int = 3600,
+    accent: Color = Color(0xFF12B76A),
     icon: @Composable () -> Unit = {
         Icon(Icons.Default.Check, contentDescription = null, tint = Color.White)
     }
@@ -38,7 +39,7 @@ fun BottomToast(
             shadowElevation = 6.dp,
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier
-                .padding(bottom = 24.dp)
+                .padding(bottom = 56.dp)
                 .fillMaxWidth(0.9f)
         ) {
             Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
